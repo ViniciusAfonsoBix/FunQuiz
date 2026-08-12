@@ -847,6 +847,21 @@ async function handle(req, res) {
     }
   }
 
+  // Serve a dynamically generated QR SVG that points to the public join URL
+  if (p === '/qr.svg') {
+    try {
+      const QR = require(path.join(ROOT, 'public', 'qr.js'));
+      const join = PUBLIC_URL ? PUBLIC_URL + '/play' : 'https://funquiz-sgn7.onrender.com/play';
+      const svg = QR.svg(join, { dark: '#14082b', light: '#ffffff', quiet: 2 });
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(svg);
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('error generating QR');
+    }
+    return;
+  }
+
   if (p === '/play' || p === '/play/') return serveStatic(res, '/play.html');
   if (p === '/host' || p === '/host/') return serveStatic(res, '/presenter.html');
   return serveStatic(res, p);
