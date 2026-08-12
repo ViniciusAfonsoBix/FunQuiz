@@ -51,10 +51,6 @@
   .body {
     position: relative; flex: 1 1 auto; display: flex; flex-direction: column;
     min-height: 0; padding: 10px 0 0;
-    /* quem rola é a região de dentro (.opts/.cloud/.board/.lobby), nunca este
-       contêiner: alturas fracionárias faziam ele pintar uma barra por 2px que
-       não existiam, com o cabeçalho e os controles fixos no lugar */
-    overflow: hidden;
   }
 
   /* cópia congelada da tela anterior, desaparecendo por cima da nova */
@@ -68,7 +64,7 @@
        empurrar as alternativas para fora */
     font-size: clamp(20px, min(3.4vw, 4.4vh), 52px); font-weight: 800; line-height: 1.18;
     letter-spacing: -0.015em; text-wrap: balance; text-align: center;
-    padding: 8px 2vw 4px; text-shadow: 0 4px 22px rgba(0, 0, 0, 0.4);
+    padding: 8px 2vw 4px; text-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
     overflow-wrap: break-word; flex: 0 0 auto;
   }
   .qmeta { text-align: center; color: var(--ink-dim); font-size: 15px; margin-top: 8px; }
@@ -82,16 +78,9 @@
 
   /* options */
   .opts {
-    /* 2 colunas no desktop, 1 no mobile (ver breakpoint de 900px). minmax(0,…)
-       em vez de 1fr para que alternativa com palavra longa quebre dentro da
-       coluna em vez de alargar a grade */
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: clamp(10px, 1.4vw, 16px); padding: clamp(10px, 1.8vh, 18px) 0;
-    /* absorve a sobra e rola por dentro: o enunciado fica fixo no topo em vez de
-       a tela inteira ganhar barra de rolagem. max-content impede a grade de
-       espremer as linhas quando a altura fica apertada — era assim que a
-       alternativa longa acabava cortada pelo overflow do cartão. */
-    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    flex: 1 1 auto; min-height: 0;
     grid-auto-rows: max-content; align-content: safe center;
   }
   .opt {
@@ -139,14 +128,15 @@
   .opt .tick {
     /*position: absolute; top: 12px; right: 14px; font-size: 26px; opacity: 0;*/
     position: absolute;
-    top: 10px;
+    top: 50%;
+    transform: translateY(-50%);
     left: 45px;
     font-size: 34px;
     opacity: 0;
     text-shadow: 0px 2px 1px #333;
     font-weight: bold;
   }
-  .revealed .opt.right .tick { opacity: 1; animation: popIn 0.5s var(--ease) 0.15s both; 
+  .revealed .opt.right .tick { opacity: 1; animation: fadeIn 0.5s var(--ease) 0.15s both; 
     color: var(--good); }
     
   .why {
@@ -189,7 +179,7 @@
   /* -------------------------------------------------------------- open answers */
   .cloud {
     display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-content: flex-start;
-    overflow-y: auto; padding: 12px 0; flex: 1 1 auto; min-height: 0;
+    padding: 12px 0; flex: 1 1 auto; min-height: 0;
   }
   .card-ans {
     background: var(--panel); border: 1px solid var(--panel-line); border-left: 5px solid var(--oc, var(--a));
@@ -636,7 +626,7 @@ function paintChips() {
   if (!el) return;
   el.innerHTML = S.players.length
     ? S.players.map((p, i) => `<span class="chip ${p.online ? '' : 'off'}" style="--dot:${p.color};animation-delay:${Math.min(i * 40, 600)}ms"><i></i>${esc(p.name)}</span>`).join('')
-    : `<span style="color:var(--ink-dim)">esperando participantes…</span>`;
+    : `<span style="color:var(--ink-dim)">Esperando participantes…</span>`;
 }
 
 function renderBlockIntro() {
