@@ -7,6 +7,12 @@ const os = require('os');
 const crypto = require('crypto');
 
 const PORT = Number(process.env.PORT || 3000);
+
+// Endereço público do site — o QR do lobby aponta para cá em vez do host local.
+// Render entrega RENDER_EXTERNAL_URL sozinho; PUBLIC_URL manda por cima.
+const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '')
+  .trim().replace(/\/+$/, '');
+
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DEFAULT_FILE = path.join(ROOT, 'questions.json');
@@ -384,6 +390,7 @@ function hostView() {
     total: quiz.questions.length,
     title: quiz.title,
     subtitle: quiz.subtitle || '',
+    joinUrl: PUBLIC_URL ? PUBLIC_URL + '/play' : '',
     question: publicQuestion(q),
     reveal: state.phase === PHASE.REVEAL || state.phase === PHASE.END
       ? { answer: q ? q.answer : null, why: q ? q.why : '' }
