@@ -683,7 +683,6 @@ function renderQuestion(mode) {
   setBody(`
     <div class="${revealed ? 'revealed' : ''}" style="display:flex;flex-direction:column;flex:1;min-height:0">
       <div class="qtext">${esc(q.text)}</div>
-      ${q.prediction && !revealed ? `<div style="text-align:center"><span class="badge-pred${fresh ? '' : ' static'}">${esc(q.cue)}</span></div>` : ''}
       <div class="opts${settled ? ' settled' : ''}">${opts}</div>
       ${prompt ? `<div class="cue">Leia a pergunta em voz alta · <b>Space</b> mostra as alternativas ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
       ${revealed ? `<div class="why"><b>Resposta: ${LETTERS[S.reveal.answer]}</b> — ${esc(S.reveal.why)}</div>` : ''}
