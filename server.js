@@ -852,7 +852,7 @@ async function handle(req, res) {
     try {
       const QR = require(path.join(ROOT, 'public', 'qr.js'));
       const join = PUBLIC_URL ? PUBLIC_URL + '/play' : 'https://funquiz-sgn7.onrender.com/play';
-      const svg = QR.svg(join, { dark: '#14082b', light: '#ffffff', quiet: 2 });
+      const svg = QR.svg(join, { dark: '#14082b', light: '#ffffff', quiet: 4 });
       res.writeHead(200, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(svg);
     } catch (e) {
