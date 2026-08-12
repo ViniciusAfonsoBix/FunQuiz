@@ -1,0 +1,22 @@
+{
+  "name": "funquiz",
+  "version": "1.0.0",
+  "description": "Servidor + cliente, **zero dependências** (só Node ≥ 18). A pergunta e as alternativas aparecem **só na tela do apresentador**; no celular o participante vê apenas as formas/letras coloridas e toca na sua resposta.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ViniciusAfonsoBix/FunQuiz.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ViniciusAfonsoBix/FunQuiz/issues"
+  },
+  "homepage": "https://github.com/ViniciusAfonsoBix/FunQuiz#readme"
+}
