@@ -55,8 +55,8 @@
 
   /* cópia congelada da tela anterior, desaparecendo por cima da nova */
   .ghost {
-    position: absolute; inset: 0; pointer-events: none; z-index: 4;
-    animation: fadeOutUp 0.38s var(--ease) both;
+    /*position: absolute; inset: 0; pointer-events: none; z-index: 4;
+    animation: fadeOutUp 0.38s var(--ease) both;*/
   }
 
   .qtext {
@@ -682,7 +682,7 @@ function renderQuestion(mode) {
 
   setBody(`
     <div class="${revealed ? 'revealed' : ''}" style="display:flex;flex-direction:column;flex:1;min-height:0">
-      <div class="qtext">${esc(q.text)}</div>
+      <div class="qtext${fresh ? ' rise' : ''}">${esc(q.text)}</div>
       ${q.prediction && !revealed ? `<div style="text-align:center"><span class="badge-pred${fresh ? '' : ' static'}">APOSTE ANTES DA DEMO</span></div>` : ''}
       <div class="opts${settled ? ' settled' : ''}">${opts}</div>
       ${prompt ? `<div class="cue">leia a pergunta em voz alta · <b>Space</b> mostra as alternativas ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
@@ -710,7 +710,7 @@ function renderOpen(mode) {
 
   setBody(`
     <div style="display:flex;flex-direction:column;flex:1;min-height:0">
-      <div class="qtext">${esc(q.text)}</div>
+      <div class="qtext${fresh ? ' rise' : ''}">${esc(q.text)}</div>
       <div class="qmeta" id="openMeta">discussão aberta · sem resposta certa${prompt ? '' : ` · ${S.tally.total} resposta(s)`}</div>
       <div class="cloud" id="cloud">${cards || vazio}</div>
       ${prompt ? `<div class="cue">leia a pergunta em voz alta · <b>Space</b> abre o campo de resposta ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
@@ -747,7 +747,7 @@ function renderBoard() {
     : b && b.title ? `Ranking — ${b.title}` : 'Ranking';
   setBody(`
     <div class="board">
-      <div class="qtext" style="font-size:clamp(24px,2.6vw,40px);margin-bottom:8px">${esc(heading)}</div>
+      <div class="qtext rise" style="font-size:clamp(24px,2.6vw,40px);margin-bottom:8px">${esc(heading)}</div>
       ${b && b.total > 1 ? `<div class="qmeta" style="margin:-4px 0 10px">${b.index + 1} de ${b.total} blocos concluídos</div>` : ''}
       ${rows.length ? rows.map((r, i) => `
         <div class="row ${i < 3 ? 'top' + (i + 1) : ''}" style="animation:riseIn .5s var(--ease) ${i * 70}ms both">
