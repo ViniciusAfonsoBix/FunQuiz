@@ -169,7 +169,8 @@
 
     // dark module + reserved format areas
     setF(size - 8, 8, 1);
-    for (let i = 0; i < 9; i++) { setF(8, i, 0); setF(i, 8, 0); }
+    // (col/row 6 belongs to the timing patterns — must not be reserved)
+    for (let i = 0; i < 9; i++) { if (i === 6) continue; setF(8, i, 0); setF(i, 8, 0); }
     for (let i = 0; i < 8; i++) { setF(8, size - 1 - i, 0); setF(size - 1 - i, 8, 0); }
 
     // reserved version areas (v >= 7)
@@ -218,14 +219,16 @@
   function applyFormat(m, size, mask) {
     const data = (0b01 << 3) | mask; // ECC level L = 01
     const value = bch(data, 0x537, 11) ^ 0x5412;
-    const bit = (i) => (value >>> i) & 1;
-    for (let i = 0; i <= 5; i++) m[8][i] = bit(i);
-    m[8][7] = bit(6);
+    const bit = (i) => (value >>> i) & 1; // i = 0 is the LSB (bit 14 of the spec)
+    // copy 1: around the top-left finder
+    for (let i = 0; i <= 5; i++) m[i][8] = bit(i);
+    m[7][8] = bit(6);
     m[8][8] = bit(7);
-    m[7][8] = bit(8);
-    for (let i = 9; i <= 14; i++) m[14 - i][8] = bit(i);
-    for (let i = 0; i <= 7; i++) m[size - 1 - i][8] = bit(i);
-    for (let i = 8; i <= 14; i++) m[8][size - 15 + i] = bit(i);
+    m[8][7] = bit(8);
+    for (let i = 9; i <= 14; i++) m[8][14 - i] = bit(i);
+    // copy 2: right of the top-right finder + under the bottom-left one
+    for (let i = 0; i <= 7; i++) m[8][size - 1 - i] = bit(i);
+    for (let i = 8; i <= 14; i++) m[size - 15 + i][8] = bit(i);
     m[size - 8][8] = 1;
   }
 
