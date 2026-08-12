@@ -16,7 +16,7 @@
   }
 
   /* ---------------------------------------------------------------- top bar */
-  .top { display: flex; align-items: center; gap: clamp(8px, 1.4vw, 16px); flex: 0 0 auto; flex-wrap: wrap; }
+  .top { display: flex; align-items: flex-start; gap: clamp(8px, 1.4vw, 16px); flex: 0 0 auto; flex-wrap: wrap; height: 96px; }
   .pill {
     display: inline-flex; align-items: center; gap: 9px;
     background: var(--panel); border: 1px solid var(--panel-line);
@@ -82,7 +82,10 @@
 
   /* options */
   .opts {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+    /* 2 colunas no desktop, 1 no mobile (ver breakpoint de 900px). minmax(0,…)
+       em vez de 1fr para que alternativa com palavra longa quebre dentro da
+       coluna em vez de alargar a grade */
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: clamp(10px, 1.4vw, 16px); padding: clamp(10px, 1.8vh, 18px) 0;
     /* absorve a sobra e rola por dentro: o enunciado fica fixo no topo em vez de
        a tela inteira ganhar barra de rolagem. max-content impede a grade de
@@ -130,13 +133,22 @@
   .revealed .opt.wrong { opacity: 0.34; filter: saturate(0.35); transform: scale(0.965); }
   .revealed .opt.right {
     transform: scale(1.025);
-    box-shadow: 0 0 0 4px var(--good), 0 24px 50px rgba(38, 208, 124, 0.4);
+    box-shadow: 0 0 0 4px var(--good), 0 10px 50px rgba(38, 208, 124, 0.4);
+
   }
   .opt .tick {
-    position: absolute; top: 12px; right: 14px; font-size: 26px; opacity: 0;
+    /*position: absolute; top: 12px; right: 14px; font-size: 26px; opacity: 0;*/
+    position: absolute;
+    top: 10px;
+    left: 45px;
+    font-size: 34px;
+    opacity: 0;
+    text-shadow: 0px 2px 1px #333;
+    font-weight: bold;
   }
-  .revealed .opt.right .tick { opacity: 1; animation: popIn 0.5s var(--ease) 0.15s both; }
-
+  .revealed .opt.right .tick { opacity: 1; animation: popIn 0.5s var(--ease) 0.15s both; 
+    color: var(--good); }
+    
   .why {
     margin: 4px auto 0; max-width: min(1100px, 100%); text-align: center;
     background: rgba(0, 0, 0, 0.3); border: 1px solid var(--panel-line);
@@ -362,6 +374,7 @@
   /* o lobby é lado a lado enquanto couber; abaixo disso o QR vai para cima,
      limitado para não empurrar o resto da tela para fora */
   @media (max-width: 900px) {
+    .opts { grid-template-columns: minmax(0, 1fr); } /* mobile: uma alternativa por linha */
     .lobby { grid-template-columns: minmax(0, 1fr); align-content: start; align-items: start; padding-top: 6px; }
     .join { order: -1; justify-self: center; width: min(320px, 100%); }
     .who-list { max-height: 22vh; }
@@ -370,6 +383,9 @@
   /* telas estreitas: barras compactas e nada de texto espremido em coluna dupla */
   @media (max-width: 620px) {
     .pill { padding: 6px 12px; font-size: 13px; }
+    /* aqui a barra quebra em mais de uma linha: com altura fixa a última linha
+       vazava para fora e caía por cima do enunciado */
+    .top { height: auto; }
     .block-tag { width: 100%; order: 5; }
     .counter { margin-left: 0; width: 100%; justify-content: space-between; }
     .dots { max-width: 60vw; }
