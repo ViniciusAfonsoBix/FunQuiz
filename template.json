@@ -1,0 +1,66 @@
+{
+  "_leiame": [
+    "Modelo de questionário do Live Poll. Apague este campo _leiame quando quiser.",
+    "title / subtitle: aparecem no lobby, na tela grande.",
+    "block: perguntas seguidas com o MESMO texto de block formam um bloco, e o ranking",
+    "       aparece na virada de bloco. Deixe todas com o mesmo block para ranking só no fim.",
+    "ranking (no topo): 'block' (padrão, ao fim de cada bloco), 'always' (depois de cada",
+    "       pergunta) ou 'end' (só no fim de tudo).",
+    "ranking (na pergunta): true/false força ou suprime o ranking depois dela, ignorando o resto.",
+    "type: 'choice' (2 a 4 opções) ou 'open' (a sala digita texto livre, não pontua).",
+    "answer: índice da opção correta começando em 0 (0 = primeira).",
+    "seconds: tempo de resposta DEPOIS de as alternativas aparecerem. Omitir usa 30s",
+    "       (90s em open). 0 ou negativo = sem tempo limite, o apresentador fecha na mão.",
+    "why: uma frase, aparece na tela grande junto com a resposta.",
+    "prediction: true mostra o selo 'APOSTE ANTES DA DEMO'.",
+    "cue e id: opcionais, só para sua organização."
+  ],
+
+  "title": "Meu Questionário",
+  "subtitle": "Subtítulo que aparece no lobby",
+  "ranking": "block",
+
+  "questions": [
+    {
+      "id": "Q1",
+      "block": "Aquecimento",
+      "type": "choice",
+      "text": "Pergunta de múltipla escolha com 4 opções e 30 segundos.",
+      "options": ["Primeira opção", "Segunda opção", "Terceira opção", "Quarta opção"],
+      "answer": 1,
+      "why": "A explicação de uma frase que aparece quando a resposta é revelada.",
+      "seconds": 30
+    },
+    {
+      "id": "Q2",
+      "block": "Aquecimento",
+      "type": "choice",
+      "text": "Pergunta com só 2 opções e sem tempo limite (seconds: 0).",
+      "options": ["Verdadeiro", "Falso"],
+      "answer": 0,
+      "why": "Sem prazo, todo acerto vale 800 pontos fixos.",
+      "seconds": 0
+    },
+    {
+      "id": "Q3",
+      "block": "Segundo bloco",
+      "cue": "depois da demo do slide 12",
+      "type": "choice",
+      "prediction": true,
+      "text": "Pergunta de previsão: a sala aposta antes de você rodar a demo.",
+      "options": ["Vai dar 2 segundos", "Vai dar 20 segundos", "Vai dar erro"],
+      "answer": 0,
+      "why": "Previsão faz a demo valer mais — a sala já apostou num número.",
+      "seconds": 25
+    },
+    {
+      "id": "Q4",
+      "block": "Segundo bloco",
+      "type": "open",
+      "text": "Pergunta aberta: a sala digita e as respostas viram cards na tela grande.",
+      "placeholder": "Escreva em poucas palavras…",
+      "why": "Sem resposta certa — serve para abrir discussão.",
+      "seconds": 0
+    }
+  ]
+}

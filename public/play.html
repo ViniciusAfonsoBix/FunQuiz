@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14082b">
+<title>Live Poll</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  .app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; padding: 14px; gap: 12px; }
+
+  /* ------------------------------------------------------------------ header */
+  .hd { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+  .hd .me { font-weight: 800; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+  .hd .me i { width: 12px; height: 12px; border-radius: 50%; background: var(--dot); }
+  .hd .sc { margin-left: auto; text-align: right; line-height: 1.15; }
+  .hd .sc b { font-size: 21px; font-weight: 900; }
+  .hd .sc span { display: block; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
+
+  /* ------------------------------------------------------------------- panels */
+  .pane { position: relative; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; animation: fadeIn 0.35s both; }
+
+  /* cópia da tela anterior desaparecendo por cima da nova */
+  .ghost {
+    position: absolute; inset: 0; pointer-events: none; z-index: 4;
+    animation: fadeOutUp 0.34s var(--ease) both;
+  }
+  .mid { flex: 1; display: grid; place-items: center; text-align: center; padding: 18px; }
+  .mid h2 { font-size: clamp(24px, 7vw, 38px); font-weight: 900; letter-spacing: -0.02em; line-height: 1.14; }
+  .mid p { margin-top: 12px; color: var(--ink-dim); font-size: 16px; line-height: 1.45; max-width: 30ch; }
+  .look { font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 14px; }
+
+  /* -------------------------------------------------------------------- join */
+  .form { width: 100%; max-width: 380px; }
+  .form input {
+    width: 100%; padding: 17px 20px; border-radius: 16px; text-align: center;
+    background: rgba(255, 255, 255, 0.1); border: 2px solid var(--panel-line);
+    color: #fff; font-size: 21px; font-weight: 700; outline: none;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .form input::placeholder { color: var(--ink-faint); font-weight: 600; }
+  .form input:focus { border-color: var(--a); background: rgba(255, 255, 255, 0.16); }
+  .go {
+    width: 100%; margin-top: 12px; padding: 17px; border-radius: 16px;
+    background: linear-gradient(100deg, var(--a), #b32a8c); font-size: 19px; font-weight: 800;
+    box-shadow: var(--shadow); transition: transform 0.15s var(--ease), filter 0.2s;
+  }
+  .go:active { transform: scale(0.97); }
+  .go[disabled] { filter: grayscale(0.6) brightness(0.7); }
+  .err { margin-top: 12px; color: var(--bad); font-weight: 700; min-height: 22px; animation: shake 0.4s both; }
+
+  /* ------------------------------------------------------------------ answers */
+  .grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
+  .ans {
+    position: relative; overflow: hidden; border-radius: 22px;
+    background: linear-gradient(150deg, var(--oc), color-mix(in srgb, var(--oc) 58%, #000));
+    box-shadow: var(--shadow); display: grid; place-items: center; gap: 6px;
+    animation: riseIn 0.45s var(--ease) both;
+    transition: transform 0.25s var(--ease), opacity 0.3s, filter 0.3s;
+  }
+  .ans svg { width: 20vw; max-width: 92px; height: auto; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35)); }
+  .ans .ltr { position: absolute; top: 11px; left: 15px; font-size: 24px; font-weight: 900; opacity: 0.85; }
+  .ans:active { transform: scale(0.95); }
+  .ans::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.45), transparent 60%);
+    opacity: 0; transition: opacity 0.4s;
+  }
+  .ans.tap::after { opacity: 1; animation: fadeIn 0.15s; }
+  .grid.locked .ans { pointer-events: none; }
+  /* a grade já estava na tela quando você tocou: não re-anima a entrada */
+  .grid.settled .ans { animation: none; }
+  .grid.locked .ans:not(.mine) { opacity: 0.25; filter: saturate(0.3); transform: scale(0.93); }
+  /* três batidas e para: confirma a escolha sem ficar pulsando a pergunta toda */
+  .grid.locked .ans.mine { animation: pulse 1.5s var(--ease) 3 both; }
+
+  /* ------------------------------------------------------------------- result */
+  .verdict { flex: 1; display: grid; place-items: center; text-align: center; border-radius: 24px; padding: 22px; }
+  .verdict.good { background: linear-gradient(160deg, rgba(38, 208, 124, 0.28), transparent); }
+  .verdict.bad { background: linear-gradient(160deg, rgba(255, 77, 109, 0.24), transparent); }
+  .verdict .big { font-size: clamp(30px, 9vw, 52px); font-weight: 900; animation: popIn 0.5s var(--ease) both; }
+  .verdict .ico { font-size: 68px; animation: popIn 0.5s var(--ease) both; }
+  .verdict.bad .ico { animation: shake 0.5s both; }
+  .verdict .pts { margin-top: 10px; font-size: 26px; font-weight: 800; color: #ffd76e; animation: riseIn 0.5s var(--ease) 0.15s both; }
+  .verdict .sub2 { margin-top: 12px; color: var(--ink-dim); font-size: 15px; }
+
+  /* --------------------------------------------------------------- open input */
+  .openbox { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+  .openbox textarea {
+    width: 100%; min-height: 130px; resize: none; padding: 16px; border-radius: 16px;
+    background: rgba(255, 255, 255, 0.1); border: 2px solid var(--panel-line);
+    color: #fff; font: inherit; font-size: 18px; outline: none;
+  }
+  .openbox textarea:focus { border-color: var(--b); }
+
+  .rank { display: flex; flex-direction: column; gap: 8px; }
+  .lrow {
+    display: grid; grid-template-columns: 42px 1fr auto; gap: 12px; align-items: center;
+    background: var(--panel); border: 1px solid var(--panel-line); border-radius: 12px;
+    padding: 11px 15px; font-weight: 700;
+    animation: riseIn 0.4s var(--ease) both;
+  }
+  .lrow.mine { border-color: var(--a); background: rgba(232, 56, 91, 0.2); }
+
+  .ft { flex: 0 0 auto; text-align: center; font-size: 12px; color: var(--ink-faint); letter-spacing: 0.08em; }
+  .offline {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 40; text-align: center;
+    background: var(--bad); padding: 6px; font-weight: 700; font-size: 13px;
+  }
+  .notice {
+    position: fixed; left: 12px; right: 12px; bottom: 16px; z-index: 41; text-align: center;
+    background: rgba(38, 208, 124, 0.92); color: #05231a; border-radius: 14px;
+    padding: 12px 16px; font-weight: 800; font-size: 15px; box-shadow: var(--shadow);
+    animation: riseIn 0.45s var(--ease) both;
+  }
+  .notice.ruim { background: rgba(255, 77, 109, 0.95); color: #2b0008; }
+  .confetti { position: fixed; inset: 0; pointer-events: none; z-index: 30; overflow: hidden; }
+  .confetti i { position: absolute; width: 9px; height: 14px; border-radius: 2px; animation: fall linear forwards; }
+  @keyframes fall {
+    from { transform: translateY(-8vh) rotate(0deg); opacity: 1; }
+    to   { transform: translateY(108vh) rotate(720deg); opacity: 0.9; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="hd" id="hd" hidden>
+    <span class="me"><i id="meDot"></i><span id="meName"></span></span>
+    <span class="sc"><b class="mono" id="meScore">0</b><span id="meRank">—</span></span>
+  </div>
+  <div class="pane" id="pane"></div>
+  <div class="ft" id="ft"></div>
+</div>
+<div class="confetti" id="confetti"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const pane = $('#pane');
+
+// troca de tela cruzando as animações: o novo entra enquanto o antigo desaparece
+function setPane(html) {
+  const ghosts = [...pane.children]
+    .filter((el) => !el.classList.contains('ghost'))
+    .map((el) => {
+      const g = el.cloneNode(true);
+      g.removeAttribute('id');
+      g.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+      g.classList.add('ghost');
+      return g;
+    });
+  pane.innerHTML = html;
+  for (const g of ghosts) {
+    pane.appendChild(g);
+    setTimeout(() => g.remove(), 380);
+  }
+}
+const SHAPES = [
+  '<polygon points="20,3 37,34 3,34"/>',
+  '<polygon points="20,2 38,20 20,38 2,20"/>',
+  '<circle cx="20" cy="20" r="17"/>',
+  '<rect x="4" y="4" width="32" height="32" rx="4"/>',
+];
+const shape = (i) => `<svg viewBox="0 0 40 40" fill="#fff">${SHAPES[i % 4]}</svg>`;
+const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+let S = null, pid = localStorage.getItem('pollPid') || null, sig = '', pending = null;
+let gridOnScreen = false; // a grade de respostas está (ou acabou de estar) na tela
+
+// ------------------------------------------------------------------- rendering
+function view() {
+  const key = JSON.stringify([
+    S.joined, S.phase, S.index, S.myAnswer, S.reveal, S.me && S.me.score, S.me && S.me.rank, S.playerCount,
+  ]);
+  if (key === sig) return;
+  sig = key;
+
+  $('#hd').hidden = !S.joined;
+  if (S.me) {
+    $('#meDot').style.setProperty('--dot', S.me.color);
+    $('#meName').textContent = S.me.name;
+    $('#meScore').textContent = S.me.score;
+    $('#meRank').textContent = S.me.rank ? `#${S.me.rank} de ${S.me.of}` : 'sem pontos';
+  }
+  $('#ft').textContent = S.joined ? `sala ${S.room} · ${S.playerCount} na sala` : '';
+
+  if (!S.joined) return renderJoin();
+  if (S.phase === 'lobby')
+    return renderWait('Você entrou! 🎉', S.total
+      ? 'Olhe para a tela grande — o apresentador começa em instantes.'
+      : 'O apresentador ainda está carregando as perguntas. Fique por aqui.');
+  if (S.phase === 'blockintro')
+    return renderWait(
+      S.block && S.block.title ? S.block.title : 'Novo bloco',
+      `Começando ${S.block && S.block.total > 1 ? `o bloco ${S.block.index + 1} de ${S.block.total}` : 'o bloco'} · ${S.block ? S.block.size : 0} pergunta(s). Olhe a tela grande.`);
+  if (S.phase === 'prompt')
+    return renderWait('Olhe a tela grande 👀', S.question && S.question.untimed
+      ? 'O apresentador está lendo a pergunta. As alternativas liberam já — sem pressa, essa não tem tempo limite.'
+      : 'O apresentador está lendo a pergunta. As alternativas liberam já — o tempo só começa aí.');
+  if (S.phase === 'question') return S.myAnswer ? renderLocked() : renderAnswer();
+  if (S.phase === 'reveal') return renderReveal();
+  if (S.phase === 'scores' || S.phase === 'end') return renderRank();
+  renderWait('Aguarde…', '');
+}
+
+function renderJoin(err) {
+  setPane(`
+    <div class="mid">
+      <div class="form">
+        <div class="look">entrar na sala</div>
+        <h2 style="margin-bottom:18px">${esc(S ? S.title : 'Live Poll')}</h2>
+        <input id="nm" placeholder="seu nome" maxlength="18" autocomplete="off" autocapitalize="words" enterkeyhint="go">
+        <button class="go" id="join">Entrar</button>
+        <div class="err" id="err">${err ? esc(err) : ''}</div>
+      </div>
+    </div>`);
+  const input = $('#nm');
+  input.focus();
+  const submit = async () => {
+    const name = input.value.trim();
+    if (!name) return;
+    $('#join').disabled = true;
+    const r = await fetch('/api/join', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+    if (r.ok) {
+      pid = r.id;
+      localStorage.setItem('pollPid', pid);
+      sig = '';
+      if (r.reclaimed) notice(`bem-vindo de volta, ${r.name} — ${r.score} pontos recuperados`);
+      reconnect();
+    } else {
+      sig = 'x';
+      renderJoin(r.error);
+    }
+  };
+  $('#join').onclick = submit;
+  input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+}
+
+function renderWait(title, sub) {
+  gridOnScreen = false; // saiu da pergunta: a próxima grade entra animada
+  setPane(`<div class="mid"><div>
+    <div class="look">${S.index >= 0 ? `pergunta ${S.index + 1} de ${S.total}` : 'lobby'}</div>
+    <h2>${esc(title)}</h2><p>${esc(sub)}</p></div></div>`);
+}
+
+function renderAnswer() {
+  const q = S.question;
+  if (q.type === 'open') {
+    setPane(`
+      <div class="openbox">
+        <div class="look" style="text-align:center">${esc(q.placeholder)}</div>
+        <textarea id="ta" maxlength="200" placeholder="digite aqui…"></textarea>
+        <button class="go" id="send">Enviar</button>
+        <div class="err" id="err"></div>
+      </div>`);
+    $('#ta').focus();
+    $('#send').onclick = async () => {
+      const text = $('#ta').value.trim();
+      if (!text) return;
+      $('#send').disabled = true;
+      const r = await send({ text });
+      if (!r.ok) { $('#err').textContent = r.error; notice(r.error, true); $('#send').disabled = false; }
+    };
+    return;
+  }
+  const n = q.optionCount || 4;
+  setPane(`
+    <div class="look" style="text-align:center;margin-bottom:6px">
+      ${q.prediction ? 'aposte antes da demo · ' : ''}pergunta ${S.index + 1} de ${S.total} ·
+      ${q.untimed ? 'sem tempo limite · ' : ''}toque na sua resposta
+    </div>
+    <div class="grid" id="grid">
+      ${Array.from({ length: n }, (_, i) => `
+        <button class="ans opt-${i}" data-i="${i}" style="animation-delay:${i * 70}ms">
+          <span class="ltr">${LETTERS[i]}</span>${shape(i)}
+        </button>`).join('')}
+    </div>`);
+  gridOnScreen = true;
+  $('#grid').onclick = async (e) => {
+    const btn = e.target.closest('.ans');
+    if (!btn) return;
+    const i = Number(btn.dataset.i);
+    btn.classList.add('tap');
+    navigator.vibrate?.(35);
+    $('#grid').classList.add('locked');
+    btn.classList.add('mine');
+    pending = i;
+    const r = await send({ choice: i });
+    if (!r.ok) {
+      pending = null;
+      sig = '';
+      notice(r.error || 'não deu para registrar — tente de novo', true);
+      view(); // solta a grade para uma nova tentativa
+    }
+  };
+}
+
+function renderLocked() {
+  const mine = S.myAnswer;
+  const q = S.question;
+  if (q.type === 'open') {
+    setPane(`<div class="mid"><div>
+      <div class="look">enviado</div><h2>Resposta registrada ✍️</h2>
+      <p>“${esc(mine.text)}”</p></div></div>`);
+    return;
+  }
+  const n = q.optionCount || 4;
+  // se a grade acabou de sair da tela (você tocou agora), ela não reanima a entrada
+  setPane(`
+    <div class="look" style="text-align:center;margin-bottom:6px">respondido — aguardando os outros</div>
+    <div class="grid locked${gridOnScreen ? ' settled' : ''}">
+      ${Array.from({ length: n }, (_, i) => `
+        <div class="ans opt-${i} ${i === mine.choice ? 'mine' : ''}">
+          <span class="ltr">${LETTERS[i]}</span>${shape(i)}
+        </div>`).join('')}
+    </div>`);
+  gridOnScreen = true;
+}
+
+function renderReveal() {
+  gridOnScreen = false;
+  const r = S.reveal;
+  if (r.open) {
+    setPane(`<div class="mid"><div><div class="look">discussão aberta</div>
+      <h2>Sem resposta certa 💬</h2><p>Olhe a tela grande — as respostas da sala estão lá.</p></div></div>`);
+    return;
+  }
+  if (!S.myAnswer) {
+    setPane(`<div class="verdict bad"><div>
+      <div class="ico">${r.untimed ? '🤷' : '⏱️'}</div>
+      <div class="big">${r.untimed ? 'Sem resposta' : 'Passou o tempo'}</div>
+      <div class="sub2">Era a alternativa <b>${LETTERS[r.answer]}</b>. Na próxima!</div></div></div>`);
+    return;
+  }
+  const good = r.correct;
+  setPane(`
+    <div class="verdict ${good ? 'good' : 'bad'}"><div>
+      <div class="ico">${good ? '🎯' : '❌'}</div>
+      <div class="big">${good ? 'Acertou!' : 'Não foi essa'}</div>
+      ${good ? `<div class="pts">+${r.gained}</div>` : `<div class="sub2">A certa era <b>${LETTERS[r.answer]}</b></div>`}
+      ${good && S.me.streak > 1 ? `<div class="sub2">🔥 ${S.me.streak} seguidas</div>` : ''}
+      <div class="sub2">${S.me.rank ? `você está em #${S.me.rank} de ${S.me.of}` : ''}</div>
+    </div></div>`);
+  if (good) burst(60);
+  navigator.vibrate?.(good ? [30, 40, 30] : 140);
+}
+
+function renderRank() {
+  gridOnScreen = false;
+  const rows = S.podium || [];
+  const end = S.phase === 'end';
+  setPane(`
+    <div class="mid" style="align-items:start;padding-top:6px"><div style="width:100%;max-width:420px">
+      <div class="look">${end ? 'resultado final' : S.block && S.block.title ? 'fim de ' + esc(S.block.title) : 'ranking'}</div>
+      <h2 style="font-size:26px;margin-bottom:14px">${end ? 'Acabou! 🎉' : `Você: #${S.me.rank || '—'} · ${S.me.score} pts`}</h2>
+      <div class="rank">
+        ${rows.map((r, i) => `
+          <div class="lrow ${S.me && r.id === S.me.id ? 'mine' : ''}" style="animation-delay:${i * 80}ms">
+            <span class="mono">#${r.rank}</span><span>${esc(r.name)}</span><span class="mono">${r.score}</span>
+          </div>`).join('') || '<p>ninguém pontuou ainda</p>'}
+      </div>
+    </div></div>`);
+  if (end && S.me && S.me.rank <= 3) burst(120);
+}
+
+function notice(text, ruim) {
+  const el = document.createElement('div');
+  el.className = 'notice' + (ruim ? ' ruim' : '');
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4200);
+}
+
+function burst(n) {
+  const box = $('#confetti');
+  const cols = ['#ff4d6d', '#4dabff', '#ffc93c', '#3ddc97', '#b47cff', '#fff'];
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('i');
+    el.style.left = Math.random() * 100 + 'vw';
+    el.style.background = cols[i % cols.length];
+    el.style.animationDuration = 2 + Math.random() * 2 + 's';
+    el.style.animationDelay = Math.random() * 0.7 + 's';
+    box.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+  }
+}
+
+// ------------------------------------------------------------------ transport
+const send = (b) =>
+  fetch('/api/answer', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ id: pid }, b)),
+  }).then((r) => r.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+
+let es = null, banner = null;
+function reconnect() {
+  if (es) es.close();
+  es = new EventSource('/events?role=player' + (pid ? '&pid=' + encodeURIComponent(pid) : ''));
+  es.addEventListener('state', (e) => {
+    S = JSON.parse(e.data);
+    if (!S.joined && pid) { localStorage.removeItem('pollPid'); pid = null; }
+    view();
+  });
+  es.onopen = () => { if (banner) { banner.remove(); banner = null; } };
+  es.onerror = () => {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.className = 'offline';
+      banner.textContent = 'reconectando…';
+      document.body.appendChild(banner);
+    }
+  };
+}
+reconnect();
+</script>
+</body>
+</html>

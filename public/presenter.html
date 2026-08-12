@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Poll — Apresentador</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  .stage { position: relative; height: 100vh; display: flex; flex-direction: column; padding: 22px 30px 0; }
+
+  /* ---------------------------------------------------------------- top bar */
+  .top { display: flex; align-items: center; gap: 16px; flex: 0 0 auto; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 9px;
+    background: var(--panel); border: 1px solid var(--panel-line);
+    padding: 8px 16px; border-radius: 999px;
+    font-size: 15px; font-weight: 600; letter-spacing: 0.02em;
+    backdrop-filter: blur(8px);
+  }
+  .pill b { letter-spacing: 0.16em; }
+  .pill.accent { background: linear-gradient(100deg, var(--a), #b32a8c); border-color: transparent; }
+  .top .grow { flex: 1; }
+  .block-tag { font-size: 15px; color: var(--ink-dim); font-weight: 600; }
+
+  /* --------------------------------------------------------------- timer dial */
+  .dial { position: relative; width: 96px; height: 96px; flex: 0 0 auto; }
+  .dial svg { transform: rotate(-90deg); display: block; }
+  .dial circle { fill: none; stroke-width: 9; stroke-linecap: round; }
+  .dial .track { stroke: rgba(255, 255, 255, 0.14); }
+  .dial .run { stroke: #ffd76e; transition: stroke 0.4s linear; }
+  .dial span {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: 30px; font-weight: 800;
+  }
+  .dial.low .run { stroke: var(--bad); }
+  .dial.low span { animation: ticker 1s steps(2, end) infinite; }
+
+  .pill.nolimit {
+    background: rgba(255, 215, 110, 0.14); border-color: rgba(255, 215, 110, 0.45);
+    color: #ffd76e; animation: popIn 0.45s var(--ease) both;
+  }
+
+  /* ------------------------------------------------------------------ centre */
+  .body { position: relative; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; padding: 10px 0 0; }
+
+  /* cópia congelada da tela anterior, desaparecendo por cima da nova */
+  .ghost {
+    position: absolute; inset: 0; pointer-events: none; z-index: 4;
+    animation: fadeOutUp 0.38s var(--ease) both;
+  }
+
+  .qtext {
+    font-size: clamp(26px, 3.4vw, 52px); font-weight: 800; line-height: 1.16;
+    letter-spacing: -0.015em; text-wrap: balance; text-align: center;
+    padding: 8px 2vw 4px; text-shadow: 0 4px 22px rgba(0, 0, 0, 0.4);
+  }
+  .qmeta { text-align: center; color: var(--ink-dim); font-size: 15px; margin-top: 8px; }
+  .badge-pred {
+    display: inline-block; margin-top: 12px; padding: 6px 15px; border-radius: 999px;
+    background: rgba(255, 215, 110, 0.16); border: 1px solid rgba(255, 215, 110, 0.5);
+    color: #ffd76e; font-size: 14px; font-weight: 700; letter-spacing: 0.08em;
+    animation: popIn 0.5s var(--ease) both;
+  }
+  .badge-pred.static { animation: none; }
+
+  /* options */
+  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: auto 0; padding: 18px 0; }
+  .opt {
+    position: relative; overflow: hidden;
+    display: grid; grid-template-columns: 62px 1fr auto; align-items: center; gap: 18px;
+    background: linear-gradient(150deg, var(--oc), color-mix(in srgb, var(--oc) 62%, #000));
+    border-radius: var(--radius); padding: 20px 24px; min-height: 108px;
+    box-shadow: var(--shadow);
+    animation: riseIn 0.5s var(--ease) both;
+    transition: opacity 0.45s var(--ease), transform 0.45s var(--ease), filter 0.45s var(--ease);
+  }
+  .opt::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 46px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+    animation: sheen 1.5s var(--ease) 0.45s 1 both; /* uma passada só, e apaga */
+  }
+  .opt .shape { display: grid; place-items: center; }
+  .opt .shape svg { width: 40px; height: 40px; filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.35)); }
+  .opt .txt { font-size: clamp(17px, 1.55vw, 27px); font-weight: 700; line-height: 1.24; }
+  .opt .cnt {
+    font-size: 30px; font-weight: 800; opacity: 0;
+    transform: translateX(12px); transition: opacity 0.4s, transform 0.4s var(--ease);
+  }
+  .opt .fill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+    background: rgba(255, 255, 255, 0.2);
+    transition: width 0.9s var(--ease);
+  }
+  .revealed .opt { animation: none; }
+  .revealed .opt::after { display: none; }
+  .revealed .opt .cnt { opacity: 1; transform: none; }
+  .revealed .opt.wrong { opacity: 0.34; filter: saturate(0.35); transform: scale(0.965); }
+  .revealed .opt.right {
+    transform: scale(1.025);
+    box-shadow: 0 0 0 4px var(--good), 0 24px 50px rgba(38, 208, 124, 0.4);
+  }
+  .opt .tick {
+    position: absolute; top: 12px; right: 14px; font-size: 26px; opacity: 0;
+  }
+  .revealed .opt.right .tick { opacity: 1; animation: popIn 0.5s var(--ease) 0.15s both; }
+
+  .why {
+    margin: 4px auto 0; max-width: 1100px; text-align: center;
+    background: rgba(0, 0, 0, 0.3); border: 1px solid var(--panel-line);
+    border-radius: 16px; padding: 16px 24px; font-size: clamp(15px, 1.3vw, 22px);
+    line-height: 1.45; color: #eadcff;
+    animation: riseIn 0.5s var(--ease) 0.25s both;
+  }
+  .why b { color: var(--good); }
+
+  /* cartas viradas: as formas já aparecem, o texto não — o relógio ainda não correu */
+  .opt.facedown { background: rgba(255, 255, 255, 0.09); border: 1px dashed var(--panel-line); box-shadow: none; }
+  .opt.facedown::after { animation-duration: 1.9s; }
+  .opt.facedown .shape svg { opacity: 0.5; }
+  .opt.facedown .veil {
+    display: block; height: 16px; width: 58%; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+  }
+
+  /* as cartas já estão na tela desde a leitura: ao virar, elas ficam paradas e
+     só o conteúdo surge — a entrada não roda duas vezes na mesma pergunta */
+  .opts.settled .opt { animation: none; }
+  .opts.settled .opt .txt,
+  .opts.settled .opt .shape { animation: fadeIn 0.45s var(--ease) both; }
+  .opts.settled .opt::after { animation-delay: 0.15s; }
+  .cue {
+    margin: 2px auto 0; text-align: center; font-size: clamp(14px, 1.15vw, 19px);
+    color: var(--ink-dim); animation: fadeIn 0.6s 0.4s both;
+  }
+  .cue b {
+    color: var(--ink); border: 1px solid var(--ink-faint); border-radius: 6px;
+    padding: 1px 7px; margin: 0 2px;
+  }
+
+  /* -------------------------------------------------------------- open answers */
+  .cloud { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-content: flex-start; overflow: auto; padding: 12px 0; margin: auto 0; }
+  .card-ans {
+    background: var(--panel); border: 1px solid var(--panel-line); border-left: 5px solid var(--oc, var(--a));
+    border-radius: 14px; padding: 13px 17px; max-width: 420px;
+    animation: popIn 0.45s var(--ease) both;
+  }
+  .card-ans .who { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 5px; }
+  .card-ans .what { font-size: 19px; font-weight: 600; line-height: 1.3; }
+
+  /* ------------------------------------------------------------------- lobby */
+  .lobby { flex: 1; display: grid; grid-template-columns: 1fr 380px; gap: 40px; align-items: center; min-height: 0; }
+  .lobby h1 { font-size: clamp(34px, 4.6vw, 74px); font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; }
+  .lobby .sub { margin-top: 14px; font-size: clamp(16px, 1.5vw, 24px); color: var(--ink-dim); max-width: 22ch; }
+  .join {
+    background: var(--panel); border: 1px solid var(--panel-line); border-radius: 24px;
+    padding: 24px; text-align: center; backdrop-filter: blur(10px); box-shadow: var(--shadow);
+    animation: spinIn 0.7s var(--ease) both;
+  }
+  .join .qr { background: #fff; border-radius: 14px; padding: 10px; line-height: 0; }
+  .join .qr svg { width: 100%; height: auto; }
+  .join .label { font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); margin: 16px 0 6px; }
+  .join .url { font-size: 19px; font-weight: 700; word-break: break-all; }
+  .join .code { font-size: 34px; font-weight: 900; letter-spacing: 0.2em; }
+
+  /* -------------------------------------------------- painel do questionário */
+  .quiz {
+    margin-top: 22px; background: rgba(0, 0, 0, 0.26); border: 1px solid var(--panel-line);
+    border-radius: 18px; padding: 16px 18px; max-width: 780px;
+    animation: riseIn 0.5s var(--ease) 0.15s both;
+  }
+  .quiz.drop { border-color: var(--c); background: rgba(240, 169, 43, 0.16); }
+  .quiz .line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .quiz .who2 { font-size: 14px; color: var(--ink-dim); }
+  .quiz .who2 b { color: var(--ink); }
+  .quiz .blocks { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+  .quiz .bk {
+    font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--panel-line);
+  }
+  .quiz .bk b { color: #ffd76e; margin-left: 6px; }
+  .quiz .btn { padding: 8px 14px; font-size: 13px; }
+  .quiz .msg { margin-top: 11px; font-size: 14px; line-height: 1.5; }
+  .quiz .msg.err { color: #ffb3c0; }
+  .quiz .msg.ok { color: var(--good); }
+  .quiz .msg ul { margin: 6px 0 0 18px; }
+  .quiz .hint { font-size: 12px; color: var(--ink-faint); margin-top: 9px; }
+
+  /* sem questionário: o painel deixa de ser rodapé e vira o pedido principal */
+  .quiz.empty {
+    background: rgba(232, 56, 91, 0.14); border-color: rgba(232, 56, 91, 0.5);
+    padding: 26px 28px;
+  }
+  .quiz .ask-t { font-size: clamp(20px, 2vw, 30px); font-weight: 800; letter-spacing: -0.01em; }
+  .quiz .ask-p {
+    margin: 10px 0 18px; font-size: clamp(14px, 1.2vw, 18px); line-height: 1.55;
+    color: var(--ink-dim); max-width: 60ch;
+  }
+  .quiz .ask-p b { color: var(--ink); }
+  .quiz .ask-p code {
+    background: rgba(0, 0, 0, 0.35); border-radius: 5px; padding: 1px 6px; font-size: 0.92em;
+  }
+  .quiz.empty .btn { padding: 11px 18px; font-size: 14px; }
+
+  .who-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; max-height: 34vh; overflow: auto; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--panel); border: 1px solid var(--panel-line);
+    border-radius: 999px; padding: 8px 15px; font-weight: 600; font-size: 16px;
+    animation: popIn 0.45s var(--ease) both;
+  }
+  .chip i { width: 10px; height: 10px; border-radius: 50%; background: var(--dot); }
+  .chip.off { opacity: 0.4; }
+
+  /* ------------------------------------------------------ slide de abertura de bloco */
+  .intro { flex: 1; display: grid; place-items: center; text-align: center; }
+  .intro .kicker {
+    font-size: clamp(13px, 1.2vw, 18px); letter-spacing: 0.3em; text-transform: uppercase;
+    color: var(--ink-dim); animation: fadeIn 0.6s both;
+  }
+  .intro h2 {
+    font-size: clamp(38px, 6.4vw, 108px); font-weight: 900; letter-spacing: -0.035em;
+    line-height: 1.02; margin: 18px 0; text-wrap: balance;
+    background: linear-gradient(96deg, #fff 15%, #ffd76e 55%, #ff8fb1 95%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: riseIn 0.7s var(--ease) 0.1s both;
+  }
+  .intro .rule {
+    height: 5px; border-radius: 99px; margin: 0 auto 20px;
+    background: linear-gradient(90deg, var(--a), var(--c), var(--d));
+    animation: ruleGrow 0.9s var(--ease) 0.3s both;
+  }
+  @keyframes ruleGrow { from { width: 0; opacity: 0; } to { width: min(460px, 46vw); opacity: 1; } }
+  .intro .meta { font-size: clamp(16px, 1.6vw, 26px); color: var(--ink-dim); animation: riseIn 0.6s var(--ease) 0.45s both; }
+  .intro .shapes { display: flex; gap: 16px; justify-content: center; margin-top: 30px; }
+  .intro .shapes span { display: inline-flex; opacity: 0.9; animation: popIn 0.6s var(--ease) both; }
+  .intro .shapes svg { width: clamp(26px, 3vw, 46px); height: auto; }
+
+  /* -------------------------------------------------------------- leaderboard */
+  .board { max-width: 900px; margin: auto; width: 100%; display: flex; flex-direction: column; gap: 10px; }
+  .row {
+    display: grid; grid-template-columns: 56px 1fr auto; align-items: center; gap: 16px;
+    background: var(--panel); border: 1px solid var(--panel-line);
+    border-radius: 14px; padding: 13px 20px; font-size: 22px; font-weight: 700;
+    transition: transform 0.6s var(--ease), background 0.4s;
+  }
+  .row .rk { font-size: 19px; color: var(--ink-dim); }
+  .row .pts { font-size: 25px; font-weight: 900; }
+  .row.top1 { background: linear-gradient(100deg, rgba(255, 215, 110, 0.3), var(--panel)); border-color: rgba(255, 215, 110, 0.55); }
+  .row.top2 { background: linear-gradient(100deg, rgba(220, 226, 235, 0.22), var(--panel)); }
+  .row.top3 { background: linear-gradient(100deg, rgba(214, 150, 90, 0.22), var(--panel)); }
+  .row .streak { font-size: 15px; color: #ffd76e; margin-left: 10px; }
+
+  .podium { display: flex; align-items: flex-end; justify-content: center; gap: 22px; margin: auto; }
+  .pod { text-align: center; width: 210px; }
+  .pod .nm { font-size: 24px; font-weight: 800; margin-bottom: 10px; }
+  .pod .bar {
+    border-radius: 18px 18px 0 0; background: linear-gradient(180deg, var(--pc), transparent 140%);
+    display: grid; place-items: center; font-size: 34px; font-weight: 900;
+    transform-origin: bottom; animation: growUp 0.9s var(--ease) both;
+  }
+  @keyframes growUp { from { transform: scaleY(0.02); opacity: 0; } to { transform: scaleY(1); opacity: 1; } }
+
+  /* ---------------------------------------------------------------- bottom bar */
+  .ctl { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 14px 0 18px; }
+  .btn {
+    background: var(--panel); border: 1px solid var(--panel-line); border-radius: 12px;
+    padding: 11px 20px; font-weight: 700; font-size: 15px;
+    transition: transform 0.15s var(--ease), background 0.2s;
+  }
+  .btn:hover { background: rgba(255, 255, 255, 0.17); transform: translateY(-2px); }
+  .btn:active { transform: translateY(0) scale(0.97); }
+  .btn:disabled { opacity: 0.45; pointer-events: none; }
+  .btn.primary { background: linear-gradient(100deg, var(--a), #b32a8c); border-color: transparent; }
+  .btn kbd {
+    font: inherit; font-size: 12px; opacity: 0.65; margin-left: 8px;
+    border: 1px solid var(--ink-faint); border-radius: 5px; padding: 1px 5px;
+  }
+  .counter { margin-left: auto; display: flex; align-items: center; gap: 14px; font-weight: 700; }
+  .dots { display: flex; gap: 5px; flex-wrap: wrap; max-width: 34vw; justify-content: flex-end; }
+  .dots i {
+    width: 13px; height: 13px; border-radius: 50%; background: rgba(255, 255, 255, 0.2);
+    transition: background 0.3s, transform 0.3s var(--ease);
+  }
+  .dots i.in { background: var(--dot); transform: scale(1.25); animation: popIn 0.4s var(--ease) both; }
+
+  /* -------------------------------------------------------------------- misc */
+  .confetti { position: fixed; inset: 0; pointer-events: none; z-index: 30; overflow: hidden; }
+  .confetti i {
+    position: absolute; width: 10px; height: 16px; border-radius: 2px;
+    animation: fall linear forwards;
+  }
+  @keyframes fall {
+    from { transform: translateY(-8vh) rotate(0deg); opacity: 1; }
+    to   { transform: translateY(108vh) rotate(720deg); opacity: 0.9; }
+  }
+  .toast {
+    position: fixed; right: 26px; bottom: 96px; z-index: 25;
+    display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  }
+  .toast div {
+    background: rgba(0, 0, 0, 0.55); border: 1px solid var(--panel-line);
+    border-radius: 999px; padding: 9px 17px; font-weight: 700;
+    animation: riseIn 0.4s var(--ease) both;
+  }
+  .offline {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 40; text-align: center;
+    background: var(--bad); padding: 7px; font-weight: 700; animation: fadeIn 0.3s both;
+  }
+  @media (max-width: 900px) {
+    .opts { grid-template-columns: 1fr; }
+    .lobby { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="top">
+    <span class="pill accent">SALA <b id="room">—</b></span>
+    <span class="pill" id="pos">—</span>
+    <span class="block-tag" id="block"></span>
+    <span class="grow"></span>
+    <span class="pill" id="pcount">0 na sala</span>
+    <span class="pill nolimit" id="nolimit" hidden>∞ sem limite de tempo</span>
+    <div class="dial" id="dial" hidden>
+      <svg width="96" height="96" viewBox="0 0 96 96">
+        <circle class="track" cx="48" cy="48" r="41"></circle>
+        <circle class="run" cx="48" cy="48" r="41" id="ring"></circle>
+      </svg>
+      <span class="mono" id="tleft">0</span>
+    </div>
+  </div>
+
+  <div class="body" id="body"></div>
+
+  <div class="ctl">
+    <button class="btn primary" id="bNext">Avançar <kbd>Space</kbd></button>
+    <button class="btn" id="bPrev">Voltar <kbd>←</kbd></button>
+    <button class="btn" id="bScores">Ranking <kbd>L</kbd></button>
+    <button class="btn" id="bLobby">Lobby</button>
+    <button class="btn" id="bReset">Zerar ranking</button>
+    <div class="counter">
+      <span id="answered" class="mono">0 / 0 responderam</span>
+      <div class="dots" id="dots"></div>
+    </div>
+  </div>
+</div>
+<div class="confetti" id="confetti"></div>
+<div class="toast" id="toast"></div>
+
+<script src="/qr.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const body = $('#body');
+
+// troca o conteúdo cruzando as animações: o novo entra enquanto uma cópia
+// congelada do anterior desaparece por cima. Sem isso a troca corta seco.
+function setBody(html) {
+  const outgoing = [...body.children].filter((el) => !el.classList.contains('ghost'));
+  const ghosts = outgoing.map((el) => {
+    const g = el.cloneNode(true);
+    g.removeAttribute('id');
+    g.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+    g.classList.add('ghost');
+    return g;
+  });
+  body.innerHTML = html;
+  for (const g of ghosts) {
+    body.appendChild(g);
+    setTimeout(() => g.remove(), 420);
+  }
+}
+const SHAPES = [
+  '<polygon points="20,3 37,34 3,34"/>',
+  '<polygon points="20,2 38,20 20,38 2,20"/>',
+  '<circle cx="20" cy="20" r="17"/>',
+  '<rect x="4" y="4" width="32" height="32" rx="4"/>',
+];
+const shape = (i) => `<svg viewBox="0 0 40 40" fill="#fff">${SHAPES[i % 4]}</svg>`;
+const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+let S = null, prevPhase = null, prevQ = null, ringLen = 0, raf = null, countdown = null;
+let prevQuiz = '', quizMsg = null, inQuestion = false;
+const cloudKeys = new Set(); // respostas abertas já desenhadas na tela
+
+// ---------------------------------------------------------------- timer dial
+const ring = $('#ring');
+ringLen = 2 * Math.PI * 41;
+ring.style.strokeDasharray = ringLen;
+
+function paintDial() {
+  if (!countdown || !S || S.phase !== 'question') { $('#dial').hidden = true; return false; }
+  $('#dial').hidden = false;
+  const elapsed = (Date.now() - countdown.startedAt) / 1000;
+  const left = Math.max(0, countdown.seconds - elapsed);
+  ring.style.strokeDashoffset = ringLen * (1 - left / countdown.seconds);
+  $('#tleft').textContent = Math.ceil(left);
+  $('#dial').classList.toggle('low', left <= 5);
+  return true;
+}
+
+function tickDial() {
+  stopDial();
+  if (!paintDial()) return;
+  // interval, not rAF: a projector tab that stops compositing would freeze the clock
+  raf = setInterval(() => { if (!paintDial()) stopDial(); }, 80);
+}
+
+function stopDial() {
+  if (raf) { clearInterval(raf); raf = null; }
+}
+
+// ------------------------------------------------------------------ renderers
+function renderLobby() {
+  const url = location.origin + '/play';
+  const qr = window.QR ? QR.svg(url, { dark: '#14082b', light: '#ffffff', quiet: 2 }) : '';
+  const qi = S.quizInfo;
+  setBody(`
+    <div class="lobby">
+      <div>
+        <h1 class="rise">${esc(S.title)}</h1>
+        <p class="sub rise" style="animation-delay:.1s">${esc(S.subtitle || '')}</p>
+        <div class="quiz${qi.missing ? ' empty' : ''}" id="quizPanel">
+          ${qi.missing ? `
+            <div class="ask">
+              <div class="ask-t">Nenhum questionário carregado</div>
+              <p class="ask-p">${qi.locked
+                ? `O servidor foi iniciado com <code>QUESTIONS</code> apontando para um arquivo que não pôde ser lido. Corrija o caminho e reinicie — por segurança o upload fica desligado nesse modo.`
+                : `Carregue um <b>.json</b> com as perguntas para começar. Se ainda não tem um, baixe o modelo, edite e traga de volta.`}</p>
+              ${qi.problems.length ? `<div class="msg err" style="margin:-6px 0 16px">o arquivo encontrado não serviu:<ul>${qi.problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}
+              <div class="line">
+                ${qi.locked ? '' : '<button class="btn primary" id="bUpload">Carregar JSON…</button>'}
+                <button class="btn" id="bTemplate">Baixar modelo</button>
+              </div>
+            </div>` : `
+            <div class="line">
+              <span class="who2"><b>${qi.count}</b> perguntas em <b>${qi.blocks.length}</b> bloco(s) · <b>${esc(qi.source)}</b></span>
+              <span style="flex:1"></span>
+              <button class="btn" id="bUpload">Carregar JSON…</button>
+              <button class="btn" id="bTemplate">Baixar modelo</button>
+              ${qi.custom && qi.hasDefault ? '<button class="btn" id="bDefault">Restaurar padrão</button>' : ''}
+            </div>
+            <div class="blocks">
+              ${qi.blocks.map((b) => `<span class="bk">${esc(b.title || 'sem bloco')}<b>${b.count}</b></span>`).join('')}
+            </div>`}
+          <div class="msg" id="quizMsg"></div>
+          ${qi.locked ? '' : `<div class="hint">arraste um .json aqui${qi.missing ? '' : ' para trocar o questionário · o ranking aparece no fim de cada bloco'}</div>`}
+          <input type="file" id="quizFile" accept=".json,application/json" hidden>
+        </div>
+        <div class="who-list" id="chips"></div>
+      </div>
+      <div class="join">
+        <div class="qr">${qr}</div>
+        <div class="label">aponte a câmera ou digite</div>
+        <div class="url">${esc(url.replace(/^https?:\/\//, ''))}</div>
+        <div class="label">sala</div>
+        <div class="code mono">${esc(S.room)}</div>
+      </div>
+    </div>`);
+  paintChips();
+  wireQuizPanel();
+}
+
+// ------------------------------------------------------- upload do questionário
+function wireQuizPanel() {
+  const panel = $('#quizPanel');
+  if (!panel) return;
+  // busca o nó na hora de escrever: a resposta do upload chega depois de o
+  // lobby ter sido reconstruído, e o #quizMsg de agora já estará descartado
+  const paint = (m) => {
+    const msg = $('#quizMsg');
+    if (!msg) return;
+    msg.className = 'msg ' + (m.cls || '');
+    msg.innerHTML = esc(m.text) + (m.list && m.list.length
+      ? '<ul>' + m.list.map((p) => `<li>${esc(p)}</li>`).join('') + '</ul>' : '');
+  };
+  // guardado fora do DOM: trocar o questionário reconstrói o lobby inteiro
+  const say = (text, cls, list) => { quizMsg = { text, cls, list }; paint(quizMsg); };
+  if (quizMsg) paint(quizMsg);
+
+  const load = async (file) => {
+    if (!file) return;
+    if (!/\.json$/i.test(file.name)) return say(`"${file.name}" não é um .json`, 'err');
+    // trocar o questionário zera a sala — confirma sempre que houver algo a perder
+    const pontuados = S.leaderboard.filter((r) => r.score > 0).length;
+    const emJogo = S.phase !== 'lobby';
+    if ((emJogo || pontuados) && !confirm(
+      (emJogo
+        ? `A sala está no ar (${S.index >= 0 ? `pergunta ${S.index + 1} de ${S.total}` : S.phase}). `
+        : `${pontuados} participante(s) já pontuaram. `)
+      + '\n\nCarregar outro questionário zera a pontuação de todos, remove quem está '
+      + 'desconectado e volta para o lobby.\n\nContinuar?')) return;
+    let quiz;
+    try {
+      quiz = JSON.parse(await file.text());
+    } catch (e) {
+      return say('esse arquivo não é um JSON válido: ' + e.message, 'err');
+    }
+    say('enviando ' + file.name + '…');
+    const r = await fetch('/api/host/quiz', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quiz }),
+    }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+    if (r.ok) {
+      say(`"${r.title}" carregado — ${r.count} perguntas em ${r.blocks} bloco(s). Pontuação zerada.`, 'ok');
+      toast('questionário trocado');
+    } else {
+      say(r.error || 'não deu', 'err', r.problems);
+    }
+  };
+
+  const bUp = $('#bUpload');
+  if (bUp) bUp.onclick = () => $('#quizFile').click(); // ausente quando travado por QUESTIONS
+  $('#bTemplate').onclick = () => {
+    // dispara o download sem sair da página (a rota manda Content-Disposition)
+    const a = document.createElement('a');
+    a.href = '/api/template';
+    a.download = 'modelo-perguntas.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+  $('#quizFile').onchange = (e) => load(e.target.files[0]);
+  const bDefault = $('#bDefault');
+  if (bDefault) bDefault.onclick = async () => {
+    if (!confirm('Voltar para o questions.json do projeto? A pontuação é zerada.')) return;
+    const r = await fetch('/api/host/quiz/default', { method: 'POST' }).then((x) => x.json());
+    if (!r.ok) say(r.error, 'err');
+  };
+
+  ['dragenter', 'dragover'].forEach((ev) =>
+    panel.addEventListener(ev, (e) => { e.preventDefault(); panel.classList.add('drop'); }));
+  ['dragleave', 'drop'].forEach((ev) =>
+    panel.addEventListener(ev, (e) => { e.preventDefault(); panel.classList.remove('drop'); }));
+  panel.addEventListener('drop', (e) => load(e.dataTransfer.files[0]));
+}
+
+function paintChips() {
+  const el = $('#chips');
+  if (!el) return;
+  el.innerHTML = S.players.length
+    ? S.players.map((p, i) => `<span class="chip ${p.online ? '' : 'off'}" style="--dot:${p.color};animation-delay:${Math.min(i * 40, 600)}ms"><i></i>${esc(p.name)}</span>`).join('')
+    : `<span style="color:var(--ink-dim)">esperando participantes…</span>`;
+}
+
+function renderBlockIntro() {
+  const b = S.block;
+  const COL = ['var(--a)', 'var(--b)', 'var(--c)', 'var(--d)'];
+  setBody(`
+    <div class="intro">
+      <div>
+        <div class="kicker">${b.total > 1 ? `bloco ${b.index + 1} de ${b.total}` : 'bloco'}</div>
+        <h2>${esc(b.title)}</h2>
+        <div class="rule"></div>
+        <div class="meta">${b.size} pergunta${b.size > 1 ? 's' : ''}${b.total > 1 ? ' · ranking no fim do bloco' : ''}</div>
+        <div class="shapes">
+          ${[0, 1, 2, 3].map((i) => `<span style="color:${COL[i]};animation-delay:${0.55 + i * 0.1}s">${shape(i).replace('fill="#fff"', 'fill="currentColor"')}</span>`).join('')}
+        </div>
+      </div>
+    </div>`);
+}
+
+// a pergunta acabou de entrar na tela? (mudou de pergunta, ou veio de fora do
+// ciclo enunciado→alternativas→reveal). Se não, nada de reanimar o que já está lá.
+function isFreshQuestion() {
+  return prevQ !== S.index || !['blockintro', 'prompt', 'question', 'reveal'].includes(prevPhase);
+}
+
+// mode: 'prompt' (só o enunciado, cartas viradas, relógio parado) | 'answer' | 'reveal'
+function renderQuestion(mode) {
+  const q = S.question;
+  const t = S.tally;
+  const revealed = mode === 'reveal';
+  const prompt = mode === 'prompt';
+  const max = Math.max(1, ...t.counts);
+  // vindo da leitura da MESMA pergunta as cartas já estavam na tela: não re-anima
+  const settled = !prompt && prevPhase === 'prompt' && prevQ === S.index;
+  const fresh = isFreshQuestion(); // enunciado e selo animam só na 1a aparição
+
+  const opts = q.options.map((o, i) => {
+    if (prompt) {
+      return `<div class="opt opt-${i} facedown" style="animation-delay:${i * 90}ms">
+        <div class="shape">${shape(i)}</div>
+        <div class="txt"><span class="veil"></span></div>
+      </div>`;
+    }
+    const cls = revealed ? (i === S.reveal.answer ? 'right' : 'wrong') : '';
+    const pct = revealed ? Math.round((t.counts[i] / max) * 100) : 0;
+    return `<div class="opt opt-${i} ${cls}" style="animation-delay:${i * 90}ms">
+      <div class="fill" style="width:${pct}%"></div>
+      <div class="shape">${shape(i)}</div>
+      <div class="txt">${LETTERS[i]}. ${esc(o)}</div>
+      <div class="cnt mono">${t.counts[i]}</div>
+      <div class="tick">✓</div>
+    </div>`;
+  }).join('');
+
+  setBody(`
+    <div class="${revealed ? 'revealed' : ''}" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="qtext${fresh ? ' rise' : ''}">${esc(q.text)}</div>
+      ${q.prediction && !revealed ? `<div style="text-align:center"><span class="badge-pred${fresh ? '' : ' static'}">APOSTE ANTES DA DEMO</span></div>` : ''}
+      <div class="opts${settled ? ' settled' : ''}">${opts}</div>
+      ${prompt ? `<div class="cue">leia a pergunta em voz alta · <b>Space</b> mostra as alternativas ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
+      ${revealed ? `<div class="why"><b>Resposta: ${LETTERS[S.reveal.answer]}</b> — ${esc(S.reveal.why)}</div>` : ''}
+    </div>`);
+}
+
+function renderOpen(mode) {
+  const q = S.question;
+  const revealed = mode === 'reveal';
+  const fresh = isFreshQuestion();
+  const prompt = mode === 'prompt';
+
+  cloudKeys.clear();
+  const cards = prompt ? '' : S.tally.texts.map((a, i) => {
+    cloudKeys.add(a.name + ' ' + a.text);
+    return `<div class="card-ans" style="--oc:${a.color};animation-delay:${Math.min(i * 60, 900)}ms">
+      <div class="who">${esc(a.name)}</div><div class="what">${esc(a.text)}</div>
+    </div>`;
+  }).join('');
+
+  const vazio = prompt
+    ? '<span class="cloud-empty" style="color:var(--ink-faint);margin:auto">…</span>'
+    : '<span class="cloud-empty" style="color:var(--ink-dim);margin:auto">as respostas aparecem aqui…</span>';
+
+  setBody(`
+    <div style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="qtext${fresh ? ' rise' : ''}">${esc(q.text)}</div>
+      <div class="qmeta" id="openMeta">discussão aberta · sem resposta certa${prompt ? '' : ` · ${S.tally.total} resposta(s)`}</div>
+      <div class="cloud" id="cloud">${cards || vazio}</div>
+      ${prompt ? `<div class="cue">leia a pergunta em voz alta · <b>Space</b> abre o campo de resposta ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
+      ${revealed ? `<div class="why">${esc(S.reveal.why)}</div>` : ''}
+    </div>`);
+}
+
+// respostas chegando ao vivo: só o card novo entra animado, o resto fica quieto
+// (antes o corpo era reconstruído a cada envio e tudo re-animava junto)
+function paintCloud() {
+  const cloud = $('#cloud');
+  if (!cloud) return;
+  const meta = $('#openMeta');
+  if (meta) meta.textContent = `discussão aberta · sem resposta certa · ${S.tally.total} resposta(s)`;
+  for (const a of S.tally.texts) {
+    const key = a.name + ' ' + a.text;
+    if (cloudKeys.has(key)) continue;
+    cloudKeys.add(key);
+    const empty = cloud.querySelector('.cloud-empty');
+    if (empty) empty.remove();
+    const el = document.createElement('div');
+    el.className = 'card-ans';
+    el.style.setProperty('--oc', a.color);
+    el.innerHTML = `<div class="who">${esc(a.name)}</div><div class="what">${esc(a.text)}</div>`;
+    cloud.appendChild(el);
+  }
+}
+
+function renderBoard() {
+  const rows = S.leaderboard.slice(0, 10);
+  const b = S.block;
+  const heading = b && b.last && b.title
+    ? `Ranking — fim de ${b.title}`
+    : b && b.title ? `Ranking — ${b.title}` : 'Ranking';
+  setBody(`
+    <div class="board">
+      <div class="qtext rise" style="font-size:clamp(24px,2.6vw,40px);margin-bottom:8px">${esc(heading)}</div>
+      ${b && b.total > 1 ? `<div class="qmeta" style="margin:-4px 0 10px">${b.index + 1} de ${b.total} blocos concluídos</div>` : ''}
+      ${rows.length ? rows.map((r, i) => `
+        <div class="row ${i < 3 ? 'top' + (i + 1) : ''}" style="animation:riseIn .5s var(--ease) ${i * 70}ms both">
+          <span class="rk mono">#${r.rank}</span>
+          <span>${esc(r.name)}${r.streak > 1 ? `<span class="streak">🔥 ${r.streak} seguidas</span>` : ''}</span>
+          <span class="pts mono" data-to="${r.score}">0</span>
+        </div>`).join('') : '<div class="row"><span></span><span style="color:var(--ink-dim)">ninguém pontuou ainda</span><span></span></div>'}
+    </div>`);
+  countUp();
+}
+
+function renderEnd() {
+  const top = S.leaderboard.slice(0, 3);
+  const heights = [230, 175, 140];
+  const colors = ['#ffd76e', '#dce2eb', '#d6965a'];
+  const order = [1, 0, 2];
+  setBody(`
+    <div style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="qtext rise" style="font-size:clamp(28px,3vw,48px)">Fim — obrigado! 🎉</div>
+      <div class="podium">
+        ${order.filter((i) => top[i]).map((i) => `
+          <div class="pod">
+            <div class="nm">${esc(top[i].name)}</div>
+            <div class="bar mono" style="--pc:${colors[i]};height:${heights[i]}px;animation-delay:${i * 160}ms">${top[i].score}</div>
+          </div>`).join('')}
+      </div>
+      <div class="board" style="margin:0 auto 10px;max-height:26vh;overflow:auto">
+        ${S.leaderboard.slice(3, 12).map((r) => `
+          <div class="row" style="font-size:18px;padding:9px 18px">
+            <span class="rk mono">#${r.rank}</span><span>${esc(r.name)}</span>
+            <span class="pts mono" style="font-size:20px">${r.score}</span>
+          </div>`).join('')}
+      </div>
+    </div>`);
+  burst(160);
+}
+
+function countUp() {
+  document.querySelectorAll('.pts[data-to]').forEach((el) => {
+    const to = Number(el.dataset.to), dur = 750, t0 = performance.now();
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur);
+      el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    // rAF is frozen in a background/non-compositing tab — never leave a stale 0 on screen
+    setTimeout(() => { el.textContent = to; }, dur + 250);
+  });
+}
+
+// ------------------------------------------------------------------- effects
+function burst(n) {
+  const box = $('#confetti');
+  const cols = ['#ff4d6d', '#4dabff', '#ffc93c', '#3ddc97', '#b47cff', '#fff'];
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('i');
+    el.style.left = Math.random() * 100 + 'vw';
+    el.style.background = cols[i % cols.length];
+    el.style.animationDuration = 2.2 + Math.random() * 2.2 + 's';
+    el.style.animationDelay = Math.random() * 0.9 + 's';
+    el.style.transform = `scale(${0.6 + Math.random()})`;
+    box.appendChild(el);
+    setTimeout(() => el.remove(), 5600);
+  }
+}
+
+function toast(msg) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  $('#toast').appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+}
+
+// -------------------------------------------------------------------- render
+function render() {
+  $('#room').textContent = S.room;
+  $('#pcount').textContent = S.players.length + ' na sala';
+  $('#block').textContent = S.block
+    ? `${S.block.title || 'sem bloco'} · ${S.block.pos}/${S.block.size}` +
+      (S.block.total > 1 ? ` · bloco ${S.block.index + 1} de ${S.block.total}` : '')
+    : '';
+  $('#pos').textContent = S.index >= 0 ? `${S.index + 1} / ${S.total}` : 'lobby';
+
+  const lastQ = S.index + 1 >= S.total;
+  const label = {
+    lobby: 'Começar', blockintro: 'Primeira pergunta do bloco',
+    prompt: 'Mostrar alternativas ⏱', question: 'Encerrar e revelar',
+    // depois do reveal o ranking só entra na virada de bloco
+    reveal: lastQ ? 'Encerrar' : S.block && S.block.rankingAfter ? 'Ranking do bloco' : 'Próxima pergunta',
+    scores: 'Próxima pergunta', end: 'Fim',
+  }[S.phase] || 'Avançar';
+  $('#bNext').innerHTML = `${label} <kbd>Space</kbd>`;
+  $('#bNext').disabled = S.phase === 'end' || !S.total; // sem perguntas não há o que começar
+
+  // voltar/lobby só fazem sentido com uma pergunta em jogo
+  inQuestion = ['blockintro', 'prompt', 'question', 'reveal'].includes(S.phase);
+  $('#bPrev').hidden = !inQuestion;
+  $('#bLobby').hidden = !inQuestion;
+
+  // denominador = todos na sala; quem caiu aparece à parte, senão o contador
+  // passa de 100% quando alguém responde e depois perde a conexão
+  const offline = S.players.filter((p) => !p.online).length;
+  $('#answered').textContent = `${S.answered} / ${S.players.length} responderam`
+    + (offline ? ` · ${offline} desconectado(s)` : '');
+  $('#dots').innerHTML = S.players.map((p) =>
+    `<i class="${p.answered ? 'in' : ''}" style="--dot:${p.color}"></i>`).join('');
+
+  // only rebuild the body when the view actually changes shape — otherwise an
+  // incoming answer would restart every entrance animation mid-question
+  const quizSig = JSON.stringify(S.quizInfo);
+  const structural = prevPhase !== S.phase || prevQ !== S.index || prevQuiz !== quizSig;
+  prevQuiz = quizSig;
+  const liveCloud = S.question && S.question.type === 'open';
+
+  if (structural) {
+    const mode = S.phase === 'prompt' ? 'prompt' : S.phase === 'reveal' ? 'reveal' : 'answer';
+    if (S.phase === 'lobby') renderLobby();
+    else if (S.phase === 'blockintro') renderBlockIntro();
+    else if (S.phase === 'scores') renderBoard();
+    else if (S.phase === 'end') renderEnd();
+    else if (S.question && S.question.type === 'open') renderOpen(mode);
+    else if (S.question) renderQuestion(mode);
+  } else if (S.phase === 'lobby') paintChips();
+  else if (liveCloud) paintCloud(); // acrescenta o card novo sem refazer a tela
+
+  prevPhase = S.phase; prevQ = S.index;
+  $('#nolimit').hidden = !(S.phase === 'question' && S.question && S.question.untimed);
+  if (S.phase !== 'question') { $('#dial').hidden = true; stopDial(); }
+}
+
+// re-render on tally changes only where cheap (question phase counts hidden, open cloud live)
+let lastSig = '';
+function maybeRender() {
+  const sig = JSON.stringify([S.phase, S.index, S.answered, S.players.map((p) => [p.id, p.online, p.answered]), S.leaderboard.map((r) => r.score), S.tally.texts.length, S.quizInfo]);
+  if (sig === lastSig) return;
+  lastSig = sig;
+  render();
+}
+
+// ----------------------------------------------------------------- transport
+let es = null, banner = null;
+function connect() {
+  es = new EventSource('/events?role=host');
+  es.addEventListener('state', (e) => {
+    const wasReveal = S && S.phase === 'reveal';
+    S = JSON.parse(e.data);
+    if (S.phase === 'question' && !S.question.untimed) {
+      // fall back to timeLeft when the countdown event hasn't landed (or on reconnect)
+      if (!countdown || countdown.q !== S.index)
+        countdown = { seconds: S.question.seconds, startedAt: Date.now() - (S.question.seconds - S.timeLeft) * 1000, q: S.index };
+      tickDial(); // idempotent — the countdown event may have arrived before this state
+    } else { countdown = null; stopDial(); }
+    maybeRender();
+    if (!wasReveal && S.phase === 'reveal' && S.question && S.question.type !== 'open') burst(70);
+  });
+  es.addEventListener('countdown', (e) => {
+    const d = JSON.parse(e.data);
+    if (d.untimed) { countdown = null; stopDial(); return; }
+    // baseline no relógio local: o do servidor pode estar em outro horário
+    countdown = { seconds: d.seconds, startedAt: Date.now() - (d.seconds - d.secondsLeft) * 1000, q: S ? S.index : 0 };
+    tickDial();
+  });
+  es.addEventListener('joined', (e) => toast('entrou: ' + JSON.parse(e.data).name));
+  es.addEventListener('allin', () => toast('todos responderam ✓'));
+  es.onopen = () => { if (banner) { banner.remove(); banner = null; } };
+  es.onerror = () => {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.className = 'offline';
+      banner.textContent = 'reconectando ao servidor…';
+      document.body.appendChild(banner);
+    }
+  };
+}
+connect();
+
+// ------------------------------------------------------------------ controls
+const post = (p, b) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) });
+$('#bNext').onclick = () => post('/api/host/next');
+$('#bPrev').onclick = () => post('/api/host/prev');
+$('#bScores').onclick = () => post('/api/host/scores');
+$('#bLobby').onclick = () => post('/api/host/lobby');
+$('#bReset').onclick = async () => {
+  const off = S ? S.players.filter((p) => !p.online) : [];
+  const aviso = off.length
+    ? `\n\nTambém remove ${off.length} desconectado(s): ${off.map((p) => p.name).join(', ')}`
+    : '';
+  if (!confirm('Zerar a pontuação de todos?' + aviso)) return;
+  const r = await post('/api/host/reset', { hard: false }).then((x) => x.json());
+  toast(r.removed && r.removed.length
+    ? `ranking zerado · ${r.removed.length} desconectado(s) removido(s)`
+    : 'ranking zerado');
+};
+
+addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k === 'arrowright' || k === 'enter') { e.preventDefault(); post('/api/host/next'); }
+  // mesma regra dos botões: fora de uma pergunta, voltar e revelar não valem
+  else if (k === 'arrowleft') { if (inQuestion) post('/api/host/prev'); }
+  else if (k === 'r') { if (S && S.phase === 'question') post('/api/host/reveal'); }
+  else if (k === 'l') post('/api/host/scores');
+  else if (k === 'f') document.documentElement.requestFullscreen?.();
+});
+</script>
+</body>
+</html>
