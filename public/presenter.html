@@ -104,7 +104,7 @@
   .opt .shape svg { width: clamp(26px, 3vw, 40px); height: clamp(26px, 3vw, 40px); filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.35)); }
   /* alternativa longa quebra em várias linhas em vez de estourar o cartão */
   .opt .txt {
-    font-size: clamp(15px, min(1.55vw, 2.4vh), 27px); font-weight: 700; line-height: 1.26;
+    font-size: clamp(18px, min(1.55vw, 2.4vh), 27px); font-weight: 600; line-height: 1.26;
     min-width: 0; overflow-wrap: anywhere; hyphens: auto;
   }
   .opt .cnt {
@@ -129,8 +129,8 @@
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    left: 45px;
-    font-size: 34px;
+    left: 47px;
+    font-size: 24px;
     opacity: 0;
     text-shadow: 0px 2px 1px #333;
     font-weight: bold;
@@ -685,7 +685,7 @@ function renderQuestion(mode) {
       <div class="qtext">${esc(q.text)}</div>
       ${q.prediction && !revealed ? `<div style="text-align:center"><span class="badge-pred${fresh ? '' : ' static'}">APOSTE ANTES DA DEMO</span></div>` : ''}
       <div class="opts${settled ? ' settled' : ''}">${opts}</div>
-      ${prompt ? `<div class="cue">leia a pergunta em voz alta · <b>Space</b> mostra as alternativas ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
+      ${prompt ? `<div class="cue">Leia a pergunta em voz alta · <b>Space</b> mostra as alternativas ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
       ${revealed ? `<div class="why"><b>Resposta: ${LETTERS[S.reveal.answer]}</b> — ${esc(S.reveal.why)}</div>` : ''}
     </div>`);
 }
