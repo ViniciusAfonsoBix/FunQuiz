@@ -5,7 +5,6 @@
     {
       "id": "Q1",
       "block": "Abertura",
-      "cue": "depois do slide 3",
       "type": "choice",
       "text": "Chamada de LLM de 2 segundos. Quanto desse tempo é seu código (montar request, ler resposta)?",
       "options": ["~50%", "~30ms", "~1s", "Depende do framework"],
@@ -16,7 +15,6 @@
     {
       "id": "Q2",
       "block": "Abertura",
-      "cue": "antes de rodar a demo do slide 7 (previsão)",
       "type": "choice",
       "prediction": true,
       "text": "10 chamadas de 2s cada, paralelizadas sem limite nenhum. Quanto tempo leva o lote?",
@@ -28,7 +26,6 @@
     {
       "id": "Q3",
       "block": "Abertura",
-      "cue": "mesmo momento, seguida da Q2",
       "type": "choice",
       "prediction": true,
       "text": "E as mesmas 10 chamadas com Semaphore(3)?",
@@ -40,7 +37,6 @@
     {
       "id": "Q4",
       "block": "Bloco 01 · Concorrência",
-      "cue": "depois do slide 5 (se não cortar) ou início do slide 6",
       "type": "choice",
       "text": "Você precisa chamar uma lib de terceiros síncrona, sem versão async, dentro de um handler async. O que fazer?",
       "options": [
@@ -56,7 +52,6 @@
     {
       "id": "Q5",
       "block": "Bloco 01 · Concorrência",
-      "cue": "depois do slide 9, antes da demo do slide 10",
       "type": "choice",
       "text": "Alguém importa requests dentro de uma função async def e chama ela num handler. O que quebra?",
       "options": [
@@ -72,7 +67,6 @@
     {
       "id": "Q6",
       "block": "Bloco 01 · Concorrência",
-      "cue": "depois do slide 11, antes da demo do slide 12 (previsão)",
       "type": "choice",
       "prediction": true,
       "text": "gather com 100 chamadas, sem return_exceptions. A de número 42 falha. O que aconteceu com as outras 99 no momento da falha?",
@@ -89,7 +83,6 @@
     {
       "id": "Q7",
       "block": "Bloco 01 · Concorrência",
-      "cue": "depois do slide 13",
       "type": "choice",
       "text": "O modelo pede 3 tools na mesma resposta. Você devolve os tool_result em 3 mensagens user separadas em vez de uma. O que acontece?",
       "options": [
@@ -105,7 +98,6 @@
     {
       "id": "Q8",
       "block": "Bloco 02 · Resiliência",
-      "cue": "antes do slide 16 (previsão, é o setup do slide)",
       "type": "choice",
       "prediction": true,
       "text": "timeout=30 por chamada, e o SDK já tem max_retries=2 por padrão. Qual o pior caso real de espera de um usuário numa chamada que falha toda vez?",
@@ -117,7 +109,6 @@
     {
       "id": "Q9",
       "block": "Bloco 02 · Resiliência",
-      "cue": "depois do slide 16",
       "type": "choice",
       "text": "Circuit breaker configurado por dentro do loop de retry. Qual o problema?",
       "options": [
@@ -133,7 +124,6 @@
     {
       "id": "Q10",
       "block": "Bloco 02 · Resiliência",
-      "cue": "depois do slide 17",
       "type": "choice",
       "text": "Retry automático numa rota que cobra o cartão do cliente, sem checar idempotência. Qual o risco?",
       "options": [
@@ -149,7 +139,6 @@
     {
       "id": "Q11",
       "block": "Bloco 02 · Resiliência",
-      "cue": "antes da demo do slide 19 (previsão)",
       "type": "choice",
       "prediction": true,
       "text": "Mil clientes recebem erro no mesmo instante e todos usam backoff exponencial sem jitter. O que acontece quando tentam de novo?",
@@ -166,7 +155,6 @@
     {
       "id": "Q12",
       "block": "Bloco 02 · Resiliência",
-      "cue": "depois do slide 20",
       "type": "choice",
       "text": "httpx.Timeout(30) numa resposta que chega 1 byte por segundo, sem nunca parar de mandar bytes. O que acontece?",
       "options": [
@@ -182,7 +170,6 @@
     {
       "id": "Q13",
       "block": "Bloco 02 · Resiliência",
-      "cue": "depois do slide 22, antes/depois da demo do slide 23",
       "type": "choice",
       "text": "Sistema está há 2 dias respondendo no degrau 3 do fallback (ex: modelo mais barato em vez do principal), e o dashboard de erro está 100% verde. Isso é um problema?",
       "options": [
@@ -198,7 +185,6 @@
     {
       "id": "Q14",
       "block": "Bloco 03 · Cache",
-      "cue": "depois do slide 25, antes do slide 26",
       "type": "choice",
       "text": "Vocês vão ligar cache de prompt, cache de embeddings e cache de respostas semântico ao mesmo tempo, num sistema novo, numa sexta-feira. Alguma dessas três é mais arriscada que as outras?",
       "options": [
@@ -214,7 +200,6 @@
     {
       "id": "Q15",
       "block": "Bloco 03 · Cache",
-      "cue": "depois do slide 26",
       "type": "choice",
       "text": "Onde deve ficar datetime.now() (a data de hoje) pra não invalidar o prompt cache a cada chamada: no system ou na mensagem de user?",
       "options": [
@@ -230,7 +215,6 @@
     {
       "id": "Q16",
       "block": "Bloco 03 · Cache",
-      "cue": "depois do slide 26, antes da demo do slide 27",
       "type": "choice",
       "text": "50 chamadas disparadas em paralelo, todas com o mesmo system prompt gigante, com prompt caching ligado. Quantas dessas 50 leem do cache?",
       "options": [
@@ -246,7 +230,6 @@
     {
       "id": "Q17",
       "block": "Bloco 03 · Cache",
-      "cue": "depois do slide 28",
       "type": "choice",
       "text": "Vocês trocaram de modelo de embedding mas mantiveram o cache antigo, sem a versão do modelo na chave. O que acontece na busca?",
       "options": [
@@ -262,7 +245,6 @@
     {
       "id": "Q18",
       "block": "Bloco 03 · Cache",
-      "cue": "durante ou depois do slide 29",
       "type": "choice",
       "text": "\"Como cancelo minha assinatura?\" e \"Como NÃO cancelo minha assinatura?\" têm cosseno ~0,95 no embedding. Com cache semântico e threshold 0,90, o que pode acontecer?",
       "options": [
@@ -278,7 +260,6 @@
     {
       "id": "Q19",
       "block": "Fecho",
-      "cue": "antes ou junto do slide 31",
       "type": "choice",
       "text": "Sistema em produção sem nenhuma das 13 técnicas do dia. Por qual implementar primeiro?",
       "options": [
@@ -294,7 +275,6 @@
     {
       "id": "Q20",
       "block": "Fecho",
-      "cue": "fecho, discussão aberta (sem opções)",
       "type": "open",
       "text": "De todas as técnicas de hoje, qual está no sistema de vocês configurada na ordem errada — e vocês só perceberam agora?",
       "placeholder": "Escreva em poucas palavras…",
