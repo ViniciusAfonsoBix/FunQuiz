@@ -97,8 +97,8 @@ input { font: inherit; }
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 /* saída do conteúdo antigo, cruzando com a entrada do novo */
 @keyframes fadeOutUp {
-  from { opacity: 1; transform: none; }
-  to   { opacity: 0; transform: translateY(-16px) scale(0.985); }
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 @keyframes ticker {
   0%, 100% { transform: scale(1); color: var(--ink); }
