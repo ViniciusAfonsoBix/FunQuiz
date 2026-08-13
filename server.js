@@ -144,9 +144,7 @@ function loadQuiz() {
   }
 }
 
-let quiz = loadQuiz();
-
-// ---------------------------------------------------------------------- state
+// ----------------------------------------------------------------------- sala
 
 // PROMPT = enunciado na tela, sem opções e sem relógio: o apresentador lê em voz
 // alta e só então libera as alternativas, que é quando o tempo começa a contar.
@@ -160,16 +158,6 @@ const PHASE = {
   END: 'end',
 };
 
-const state = {
-  phase: PHASE.LOBBY,
-  index: -1,
-  /** @type {Map<string, {id:string,name:string,score:number,streak:number,best:number,answers:Map<string,object>,online:boolean,color:string}>} */
-  players: new Map(),
-  questionStartedAt: 0,
-  lockedAt: 0,
-  timer: null,
-};
-
 const COLORS = ['#ff4d6d', '#4dabff', '#ffc93c', '#3ddc97', '#b47cff', '#ff8f4d', '#2ee6d6', '#f45bd6'];
 
 function makeCode(n = 6) {
@@ -179,7 +167,35 @@ function makeCode(n = 6) {
   return out;
 }
 
-const ROOM = process.env.ROOM || makeCode(5);
+// Uma sala carrega tudo que antes era global: o questionário, a fase, os
+// participantes e o relógio da pergunta. Nenhuma função de jogo lê estado de
+// fora daqui — é isso que mantém duas apresentações simultâneas isoladas.
+function makeRoom(quiz, code = makeCode(5)) {
+  return {
+    code,
+    createdAt: Date.now(),
+    lastActivityAt: Date.now(),
+    quiz,
+    phase: PHASE.LOBBY,
+    index: -1,
+    /** @type {Map<string, {id:string,name:string,score:number,streak:number,best:number,answers:Map<string,object>,online:boolean,color:string}>} */
+    players: new Map(),
+    questionStartedAt: 0,
+    lockedAt: 0,
+    timer: null,
+    // memo de um push: ranking e apuração são iguais para todos os clientes da
+    // sala, então saem calculados uma vez por rodada e não uma vez por conexão
+    memo: null,
+  };
+}
+
+/** @type {Map<string, ReturnType<typeof makeRoom>>} */
+const rooms = new Map();
+
+// Ainda uma sala só — o roteamento por código entra no passo seguinte. O nome
+// gritado é de propósito: enquanto existir, marca o que falta escopar.
+const THE_ROOM = makeRoom(loadQuiz(), process.env.ROOM || makeCode(5));
+rooms.set(THE_ROOM.code, THE_ROOM);
 
 // ------------------------------------------------------- sessão salva em disco
 // Fechar o terminal no meio do workshop não pode custar a pontuação da sala.
@@ -187,18 +203,18 @@ const SESSION_FILE = path.join(ROOT, 'session.json');
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // sessão de ontem não serve para hoje
 
 // impressão digital do questionário: pontuação de outro quiz não faz sentido
-function quizFingerprint() {
-  return quiz.missing ? 'none' : quiz.questions.map((q) => q.id).join(',');
+function quizFingerprint(room) {
+  return room.quiz.missing ? 'none' : room.quiz.questions.map((q) => q.id).join(',');
 }
 
-function sessionSnapshot() {
+function sessionSnapshot(room) {
   return {
     savedAt: new Date().toISOString(),
-    room: ROOM,
-    fingerprint: quizFingerprint(),
-    index: state.index,
-    phase: state.phase,
-    players: [...state.players.values()].map((p) => ({
+    room: room.code,
+    fingerprint: quizFingerprint(room),
+    index: room.index,
+    phase: room.phase,
+    players: [...room.players.values()].map((p) => ({
       id: p.id, name: p.name, ip: p.ip, color: p.color,
       score: p.score, streak: p.streak, best: p.best,
       answers: Object.fromEntries(p.answers),
@@ -209,22 +225,22 @@ function sessionSnapshot() {
 let saveTimer = null;
 
 // agrupa rajadas de resposta num único write (o push de estado é o funil de tudo)
-function scheduleSessionSave() {
+function scheduleSessionSave(room) {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    if (!state.players.size && state.index < 0) return; // nada que valha salvar
-    fs.writeFile(SESSION_FILE, JSON.stringify(sessionSnapshot()), 'utf8', (err) => {
+    if (!room.players.size && room.index < 0) return; // nada que valha salvar
+    fs.writeFile(SESSION_FILE, JSON.stringify(sessionSnapshot(room)), 'utf8', (err) => {
       if (err) console.log(`  !! não consegui salvar session.json: ${err.message}`);
     });
   }, 800);
 }
 
-function saveSessionNow() {
+function saveSessionNow(room) {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  if (!state.players.size && state.index < 0) return;
+  if (!room.players.size && room.index < 0) return;
   try {
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionSnapshot()), 'utf8');
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionSnapshot(room)), 'utf8');
   } catch (e) {
     console.log(`  !! não consegui salvar session.json: ${e.message}`);
   }
@@ -236,7 +252,7 @@ function dropSession() {
 }
 
 // devolve um resumo do que foi restaurado, ou null
-function restoreSession() {
+function restoreSession(room) {
   let snap;
   try {
     if (!fs.existsSync(SESSION_FILE)) return null;
@@ -247,26 +263,26 @@ function restoreSession() {
   }
   const idade = Date.now() - Date.parse(snap.savedAt || 0);
   if (!(idade >= 0) || idade > SESSION_TTL_MS) return null;
-  if (snap.fingerprint !== quizFingerprint()) return null; // outro questionário
+  if (snap.fingerprint !== quizFingerprint(room)) return null; // outro questionário
   if (!Array.isArray(snap.players) || !snap.players.length) return null;
 
   for (const p of snap.players) {
-    state.players.set(p.id, {
+    room.players.set(p.id, {
       id: p.id, name: p.name, ip: p.ip, color: p.color,
       score: p.score || 0, streak: p.streak || 0, best: p.best || 0,
       answers: new Map(Object.entries(p.answers || {})),
       online: false, // só a conexão SSE afirma presença
     });
   }
-  state.index = Number.isInteger(snap.index) ? snap.index : -1;
+  room.index = Number.isInteger(snap.index) ? snap.index : -1;
   // uma pergunta que estava aberta não pode ter o relógio retomado: volta para a
   // leitura da mesma pergunta, e quem já respondeu continua com a resposta dada
-  state.phase = snap.phase === PHASE.QUESTION ? PHASE.PROMPT : (snap.phase || PHASE.LOBBY);
-  if (state.index < 0 || state.index >= quiz.questions.length) {
-    state.index = -1;
-    state.phase = PHASE.LOBBY;
+  room.phase = snap.phase === PHASE.QUESTION ? PHASE.PROMPT : (snap.phase || PHASE.LOBBY);
+  if (room.index < 0 || room.index >= room.quiz.questions.length) {
+    room.index = -1;
+    room.phase = PHASE.LOBBY;
   }
-  return { players: state.players.size, index: state.index, phase: state.phase, minutos: Math.round(idade / 60000) };
+  return { players: room.players.size, index: room.index, phase: room.phase, minutos: Math.round(idade / 60000) };
 }
 
 // ------------------------------------------------------------------ SSE hub
@@ -290,25 +306,21 @@ function broadcast(event, dataFor) {
   }
 }
 
-// Memo de um push: o ranking e a apuração são os mesmos para todos os clientes,
-// então são calculados uma vez por rodada em vez de uma vez por conexão.
-let pushMemo = null;
-
-function pushState() {
-  pushMemo = {};
+function pushState(room) {
+  room.memo = {};
   try {
-    const host = hostView(); // idêntico para todos os apresentadores
-    broadcast('state', (entry) => (entry.role === 'host' ? host : playerView(entry.playerId)));
+    const host = hostView(room); // idêntico para todos os apresentadores
+    broadcast('state', (entry) => (entry.role === 'host' ? host : playerView(room, entry.playerId)));
   } finally {
-    pushMemo = null;
+    room.memo = null;
   }
-  scheduleSessionSave();
+  scheduleSessionSave(room);
 }
 
 // --------------------------------------------------------------------- views
 
-function currentQuestion() {
-  return state.index >= 0 && state.index < quiz.questions.length ? quiz.questions[state.index] : null;
+function currentQuestion(room) {
+  return room.index >= 0 && room.index < room.quiz.questions.length ? room.quiz.questions[room.index] : null;
 }
 
 function publicQuestion(q) {
@@ -326,20 +338,20 @@ function publicQuestion(q) {
   };
 }
 
-function tally() {
-  if (pushMemo && pushMemo.tally) return pushMemo.tally;
-  const t = computeTally();
-  if (pushMemo) pushMemo.tally = t;
+function tally(room) {
+  if (room.memo && room.memo.tally) return room.memo.tally;
+  const t = computeTally(room);
+  if (room.memo) room.memo.tally = t;
   return t;
 }
 
-function computeTally() {
-  const q = currentQuestion();
+function computeTally(room) {
+  const q = currentQuestion(room);
   if (!q) return { counts: [], total: 0, texts: [] };
   const counts = new Array((q.options || []).length).fill(0);
   const texts = [];
   let total = 0;
-  for (const p of state.players.values()) {
+  for (const p of room.players.values()) {
     const a = p.answers.get(q.id);
     if (!a) continue;
     total++;
@@ -349,87 +361,87 @@ function computeTally() {
   return { counts, total, texts };
 }
 
-function leaderboard(limit = 0) {
-  let rows = pushMemo && pushMemo.board;
+function leaderboard(room, limit = 0) {
+  let rows = room.memo && room.memo.board;
   if (!rows) {
-    rows = [...state.players.values()]
+    rows = [...room.players.values()]
       .map((p) => ({ id: p.id, name: p.name, score: p.score, streak: p.streak, color: p.color }))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
     rows.forEach((r, i) => (r.rank = i + 1));
-    if (pushMemo) pushMemo.board = rows;
+    if (room.memo) room.memo.board = rows;
   }
   return limit ? rows.slice(0, limit) : rows;
 }
 
-function timeLeft() {
-  const q = currentQuestion();
-  if (!q || state.phase !== PHASE.QUESTION) return 0;
+function timeLeft(room) {
+  const q = currentQuestion(room);
+  if (!q || room.phase !== PHASE.QUESTION) return 0;
   if (q.untimed) return null; // sem limite: nada a mostrar num relógio
-  const elapsed = (Date.now() - state.questionStartedAt) / 1000;
+  const elapsed = (Date.now() - room.questionStartedAt) / 1000;
   return Math.max(0, Math.round(q.seconds - elapsed));
 }
 
-function blockInfo(q) {
-  const b = quiz.blocks[q.blockIndex];
+function blockInfo(room, q) {
+  const b = room.quiz.blocks[q.blockIndex];
   if (!b) return null;
   return {
     title: b.title, pos: q.blockPos, size: b.count,
-    index: b.index, total: quiz.blocks.length,
+    index: b.index, total: room.quiz.blocks.length,
     last: q.blockPos === b.count, rankingAfter: !!q.rankingAfter,
   };
 }
 
-function hostView() {
-  const q = currentQuestion();
-  const t = tally();
+function hostView(room) {
+  const q = currentQuestion(room);
+  const t = tally(room);
   return {
     role: 'host',
-    room: ROOM,
-    phase: state.phase,
-    index: state.index,
-    total: quiz.questions.length,
-    title: quiz.title,
-    subtitle: quiz.subtitle || '',
+    room: room.code,
+    phase: room.phase,
+    index: room.index,
+    total: room.quiz.questions.length,
+    title: room.quiz.title,
+    subtitle: room.quiz.subtitle || '',
     joinUrl: PUBLIC_URL ? PUBLIC_URL + '/play' : '',
     question: publicQuestion(q),
-    reveal: state.phase === PHASE.REVEAL || state.phase === PHASE.END
+    reveal: room.phase === PHASE.REVEAL || room.phase === PHASE.END
       ? { answer: q ? q.answer : null, why: q ? q.why : '' }
       : null,
     tally: t,
     answered: t.total,
-    players: [...state.players.values()].map((p) => ({
+    players: [...room.players.values()].map((p) => ({
       id: p.id, name: p.name, color: p.color, online: p.online,
       score: p.score,
       answered: q ? p.answers.has(q.id) : false,
     })),
-    block: q ? blockInfo(q) : null,
+    block: q ? blockInfo(room, q) : null,
     quizInfo: {
-      source: quiz.source, count: quiz.questions.length, ranking: quiz.ranking,
-      blocks: quiz.blocks.map((b) => ({ title: b.title, count: b.count })),
+      source: room.quiz.source, count: room.quiz.questions.length, ranking: room.quiz.ranking,
+      blocks: room.quiz.blocks.map((b) => ({ title: b.title, count: b.count })),
       custom: quizFile() === UPLOAD_FILE,
-      missing: !!quiz.missing,          // nada carregado: a tela pede o upload
-      problems: quiz.problems || [],    // ou o arquivo existe mas está inválido
+      missing: !!room.quiz.missing,          // nada carregado: a tela pede o upload
+      problems: room.quiz.problems || [],    // ou o arquivo existe mas está inválido
       hasDefault: fs.existsSync(DEFAULT_FILE),
-      locked: !!process.env.QUESTIONS,  // servidor amarrado a um arquivo por env
+      locked: !!process.env.QUESTIONS,       // servidor amarrado a um arquivo por env
     },
-    leaderboard: leaderboard(),
-    timeLeft: timeLeft(),
+    leaderboard: leaderboard(room),
+    timeLeft: timeLeft(room),
   };
 }
 
-function playerView(playerId) {
-  const p = playerId ? state.players.get(playerId) : null;
-  const q = currentQuestion();
+function playerView(room, playerId) {
+  const p = playerId ? room.players.get(playerId) : null;
+  const q = currentQuestion(room);
   const myAnswer = p && q ? p.answers.get(q.id) || null : null;
-  const board = leaderboard();
+  const board = leaderboard(room);
   const me = p ? board.find((r) => r.id === p.id) : null;
   return {
     role: 'player',
-    room: ROOM,
-    phase: state.phase,
-    index: state.index,
-    total: quiz.questions.length,
-    title: quiz.title,
+    room: room.code,
+    phase: room.phase,
+    index: room.index,
+    total: room.quiz.questions.length,
+    title: room.quiz.title,
     joined: !!p,
     me: p
       ? { id: p.id, name: p.name, color: p.color, score: p.score, streak: p.streak, rank: me ? me.rank : null, of: board.length }
@@ -443,7 +455,7 @@ function playerView(playerId) {
       : null,
     myAnswer,
     reveal:
-      state.phase === PHASE.REVEAL && q
+      room.phase === PHASE.REVEAL && q
         ? {
             answer: q.answer !== undefined ? q.answer : null,
             correct: myAnswer ? !!myAnswer.correct : null,
@@ -452,10 +464,10 @@ function playerView(playerId) {
             untimed: !!q.untimed,
           }
         : null,
-    block: q ? blockInfo(q) : null,
-    podium: state.phase === PHASE.END || state.phase === PHASE.SCORES ? board.slice(0, 5) : null,
-    playerCount: state.players.size,
-    timeLeft: timeLeft(),
+    block: q ? blockInfo(room, q) : null,
+    podium: room.phase === PHASE.END || room.phase === PHASE.SCORES ? board.slice(0, 5) : null,
+    playerCount: room.players.size,
+    timeLeft: timeLeft(room),
   };
 }
 
@@ -467,125 +479,125 @@ function scoreFor(q, elapsedMs) {
   return Math.round(600 + 400 * (1 - ratio)); // 1000 instant → 600 at the buzzer
 }
 
-function lockQuestion() {
-  if (state.timer) { clearTimeout(state.timer); state.timer = null; }
-  state.lockedAt = Date.now();
+function lockQuestion(room) {
+  if (room.timer) { clearTimeout(room.timer); room.timer = null; }
+  room.lockedAt = Date.now();
 }
 
-function goto(phase) {
-  state.phase = phase;
-  pushState();
+function goto(room, phase) {
+  room.phase = phase;
+  pushState(room);
 }
 
 // abre uma pergunta: pelo slide do bloco, se ela começa um bloco nomeado
-function enter(index) {
-  if (index < 0 || index >= quiz.questions.length) return;
-  const q = quiz.questions[index];
-  return q.blockPos === 1 && q.block ? showBlockIntro(index) : showPrompt(index);
+function enter(room, index) {
+  if (index < 0 || index >= room.quiz.questions.length) return;
+  const q = room.quiz.questions[index];
+  return q.blockPos === 1 && q.block ? showBlockIntro(room, index) : showPrompt(room, index);
 }
 
-function showBlockIntro(index) {
-  if (index < 0 || index >= quiz.questions.length) return;
-  lockQuestion();
-  state.index = index;
-  state.questionStartedAt = 0;
-  goto(PHASE.BLOCK);
+function showBlockIntro(room, index) {
+  if (index < 0 || index >= room.quiz.questions.length) return;
+  lockQuestion(room);
+  room.index = index;
+  room.questionStartedAt = 0;
+  goto(room, PHASE.BLOCK);
 }
 
 // enunciado sozinho na tela — sem opções, sem relógio
-function showPrompt(index) {
-  if (index < 0 || index >= quiz.questions.length) return;
-  lockQuestion();
-  state.index = index;
-  state.questionStartedAt = 0;
-  goto(PHASE.PROMPT);
+function showPrompt(room, index) {
+  if (index < 0 || index >= room.quiz.questions.length) return;
+  lockQuestion(room);
+  room.index = index;
+  room.questionStartedAt = 0;
+  goto(room, PHASE.PROMPT);
 }
 
 // libera as alternativas e aí sim começa a contagem
-function startQuestion(index) {
-  if (index === undefined) index = state.index;
-  if (index < 0 || index >= quiz.questions.length) return;
-  lockQuestion();
-  state.index = index;
-  state.questionStartedAt = Date.now();
-  state.phase = PHASE.QUESTION;
-  const q = quiz.questions[index];
+function startQuestion(room, index) {
+  if (index === undefined) index = room.index;
+  if (index < 0 || index >= room.quiz.questions.length) return;
+  lockQuestion(room);
+  room.index = index;
+  room.questionStartedAt = Date.now();
+  room.phase = PHASE.QUESTION;
+  const q = room.quiz.questions[index];
   if (!q.untimed) {
-    state.timer = setTimeout(() => {
-      if (state.phase === PHASE.QUESTION) reveal();
+    room.timer = setTimeout(() => {
+      if (room.phase === PHASE.QUESTION) reveal(room);
     }, q.seconds * 1000 + 400);
   }
   // sem timestamp absoluto: o relógio do apresentador pode estar dessincronizado
   // do relógio do servidor, então mandamos quanto falta e ele conta com o dele
   broadcast('countdown', { seconds: q.seconds, untimed: !!q.untimed, secondsLeft: q.seconds });
-  pushState();
+  pushState(room);
 }
 
-function reveal() {
-  lockQuestion();
-  const q = currentQuestion();
+function reveal(room) {
+  lockQuestion(room);
+  const q = currentQuestion(room);
   if (!q) return;
   if (q.type !== 'open') {
     // settle streaks for players who never answered
-    for (const p of state.players.values()) {
+    for (const p of room.players.values()) {
       if (!p.answers.has(q.id)) p.streak = 0;
     }
   }
-  goto(PHASE.REVEAL);
+  goto(room, PHASE.REVEAL);
 }
 
 // lobby → [slide do bloco] → enunciado → opções+relógio → reveal → [ranking] → …
-function next() {
-  if (!quiz.questions.length) return; // sem questionário não há para onde avançar
-  if (state.phase === PHASE.BLOCK) return showPrompt(state.index);
-  if (state.phase === PHASE.PROMPT) return startQuestion(state.index);
-  if (state.phase === PHASE.QUESTION) return reveal();
-  if (state.phase === PHASE.REVEAL) {
-    if (state.index + 1 >= quiz.questions.length) return goto(PHASE.END);
+function next(room) {
+  if (!room.quiz.questions.length) return; // sem questionário não há para onde avançar
+  if (room.phase === PHASE.BLOCK) return showPrompt(room, room.index);
+  if (room.phase === PHASE.PROMPT) return startQuestion(room, room.index);
+  if (room.phase === PHASE.QUESTION) return reveal(room);
+  if (room.phase === PHASE.REVEAL) {
+    if (room.index + 1 >= room.quiz.questions.length) return goto(room, PHASE.END);
     // ranking só na virada de bloco (ou onde o JSON pedir)
-    const q = currentQuestion();
-    return q && q.rankingAfter ? goto(PHASE.SCORES) : enter(state.index + 1);
+    const q = currentQuestion(room);
+    return q && q.rankingAfter ? goto(room, PHASE.SCORES) : enter(room, room.index + 1);
   }
-  if (state.phase === PHASE.END) return;
-  if (state.index + 1 >= quiz.questions.length) return goto(PHASE.END);
-  return enter(state.index + 1);
+  if (room.phase === PHASE.END) return;
+  if (room.index + 1 >= room.quiz.questions.length) return goto(room, PHASE.END);
+  return enter(room, room.index + 1);
 }
 
-function prev() {
-  if (state.phase === PHASE.QUESTION) return showPrompt(state.index);
-  const q = currentQuestion();
+function prev(room) {
+  if (room.phase === PHASE.QUESTION) return showPrompt(room, room.index);
+  const q = currentQuestion(room);
   // do enunciado volta para o slide do bloco, quando essa pergunta o abre
-  if (state.phase === PHASE.PROMPT && q && q.blockPos === 1 && q.block)
-    return showBlockIntro(state.index);
-  if (state.index <= 0) { state.index = -1; return goto(PHASE.LOBBY); }
-  showPrompt(state.index - 1);
+  if (room.phase === PHASE.PROMPT && q && q.blockPos === 1 && q.block)
+    return showBlockIntro(room, room.index);
+  if (room.index <= 0) { room.index = -1; return goto(room, PHASE.LOBBY); }
+  showPrompt(room, room.index - 1);
 }
 
 // zera o ranking: quem está conectado volta a zero, quem já saiu é removido
 // (senão a lista da sala vira um cemitério de quem passou pela sessão anterior)
-function resetGame(hard) {
-  lockQuestion();
-  state.index = -1;
-  state.phase = PHASE.LOBBY;
+function resetGame(room, hard) {
+  lockQuestion(room);
+  room.index = -1;
+  room.phase = PHASE.LOBBY;
   const removed = [];
   if (hard) {
-    removed.push(...[...state.players.values()].map((p) => p.name));
-    state.players.clear();
+    removed.push(...[...room.players.values()].map((p) => p.name));
+    room.players.clear();
     dropSession();
   } else {
-    for (const p of [...state.players.values()]) {
-      if (!p.online) { removed.push(p.name); state.players.delete(p.id); continue; }
+    for (const p of [...room.players.values()]) {
+      if (!p.online) { removed.push(p.name); room.players.delete(p.id); continue; }
       p.score = 0; p.streak = 0; p.best = 0; p.answers.clear();
     }
   }
-  quiz = loadQuiz();
-  pushState();
-  return { ok: true, removed, kept: state.players.size };
+  room.quiz = loadQuiz();
+  pushState(room);
+  return { ok: true, removed, kept: room.players.size };
 }
 
 // ---------------------------------------------------------- troca do questionário
 
-function installQuiz(raw) {
+function installQuiz(room, raw) {
   if (process.env.QUESTIONS)
     return { ok: false, error: 'o servidor foi iniciado com QUESTIONS=… — troque pelo arquivo ou reinicie sem a variável' };
   let prepared;
@@ -602,38 +614,38 @@ function installQuiz(raw) {
   } catch (e) {
     return { ok: false, error: `não consegui gravar ${path.basename(UPLOAD_FILE)}: ${e.message}` };
   }
-  quiz = prepared;
-  quiz.source = path.basename(UPLOAD_FILE);
-  resetGame(false);
-  console.log(`  questionário trocado: ${quiz.title} · ${quiz.questions.length} perguntas · ${quiz.blocks.length} bloco(s)`);
-  return { ok: true, title: quiz.title, count: quiz.questions.length, blocks: quiz.blocks.length };
+  room.quiz = prepared;
+  room.quiz.source = path.basename(UPLOAD_FILE);
+  resetGame(room, false);
+  console.log(`  questionário trocado: ${room.quiz.title} · ${room.quiz.questions.length} perguntas · ${room.quiz.blocks.length} bloco(s)`);
+  return { ok: true, title: room.quiz.title, count: room.quiz.questions.length, blocks: room.quiz.blocks.length };
 }
 
-function restoreDefaultQuiz() {
+function restoreDefaultQuiz(room) {
   if (process.env.QUESTIONS) return { ok: false, error: 'servidor iniciado com QUESTIONS=…' };
   if (!fs.existsSync(DEFAULT_FILE))
     return { ok: false, error: 'não existe questions.json no projeto para voltar' };
   try { fs.unlinkSync(UPLOAD_FILE); } catch { /* já era o padrão */ }
-  quiz = loadQuiz();
-  resetGame(false);
-  return { ok: true, title: quiz.title, count: quiz.questions.length };
+  room.quiz = loadQuiz();
+  resetGame(room, false);
+  return { ok: true, title: room.quiz.title, count: room.quiz.questions.length };
 }
 
 // ------------------------------------------------------------------ handlers
 
 const MIN_ANSWER_MS = 300; // nenhum humano toca antes disso; script toca em 5ms
 
-function submitAnswer(playerId, body, ip) {
-  const p = state.players.get(playerId);
-  const q = currentQuestion();
+function submitAnswer(room, playerId, body, ip) {
+  const p = room.players.get(playerId);
+  const q = currentQuestion(room);
   if (!p || !q) return { ok: false, error: 'sem pergunta ativa' };
-  if (state.phase !== PHASE.QUESTION) return { ok: false, error: 'respostas fechadas' };
+  if (room.phase !== PHASE.QUESTION) return { ok: false, error: 'respostas fechadas' };
   if (p.answers.has(q.id)) return { ok: false, error: 'você já respondeu' };
   // a resposta tem de vir do aparelho que entrou com esse nome
   if (ip && p.ip && ip !== p.ip)
     return { ok: false, error: 'entre de novo neste aparelho para responder' };
 
-  const elapsed = Date.now() - state.questionStartedAt;
+  const elapsed = Date.now() - room.questionStartedAt;
   if (!q.untimed && elapsed > q.seconds * 1000 + 1500)
     return { ok: false, error: 'tempo esgotado' };
   if (elapsed < MIN_ANSWER_MS) return { ok: false, error: 'calma — leia as alternativas primeiro' };
@@ -659,22 +671,22 @@ function submitAnswer(playerId, body, ip) {
     p.answers.set(q.id, { choice, correct, gained, at: elapsed });
   }
 
-  pushState();
-  const everyone = [...state.players.values()].filter((x) => x.online);
+  pushState(room);
+  const everyone = [...room.players.values()].filter((x) => x.online);
   if (everyone.length && everyone.every((x) => x.answers.has(q.id))) {
     broadcast('allin', { id: q.id });
   }
   return { ok: true };
 }
 
-function join(name, ip) {
+function join(room, name, ip) {
   // corpo hostil não pode virar exceção: {"name":{"toString":1}} quebrava o String()
   name = (typeof name === 'string' ? name : '').trim().replace(/\s+/g, ' ').slice(0, 18);
   if (!name) return { ok: false, error: 'digite um nome' };
 
   // nome repetido só passa se vier do mesmo IP que o criou — aí é a mesma pessoa
   // voltando (trocou de aba, limpou o navegador, caiu a rede) e recupera a pontuação
-  const taken = [...state.players.values()].find((p) => p.name.toLowerCase() === name.toLowerCase());
+  const taken = [...room.players.values()].find((p) => p.name.toLowerCase() === name.toLowerCase());
   if (taken) {
     if (taken.ip !== ip) return { ok: false, error: 'esse nome já está na sala' };
     // mesmo IP não basta: se aquele jogador está conectado agora, ninguém assume
@@ -682,7 +694,7 @@ function join(name, ip) {
     if (taken.online)
       return { ok: false, error: 'esse nome está conectado agora — se for você, feche a outra aba' };
     // não marca online aqui: quem afirma presença é o stream SSE que vem a seguir
-    pushState();
+    pushState(room);
     return {
       ok: true, id: taken.id, name: taken.name, color: taken.color,
       reclaimed: true, score: taken.score,
@@ -690,12 +702,12 @@ function join(name, ip) {
   }
 
   const id = crypto.randomUUID();
-  const color = COLORS[state.players.size % COLORS.length];
+  const color = COLORS[room.players.size % COLORS.length];
   // online é afirmado pela conexão SSE, não pelo join: um join que nunca abriu
   // o stream (fechou o celular na hora) fica removível pelo "Zerar ranking"
-  state.players.set(id, { id, name, ip, score: 0, streak: 0, best: 0, answers: new Map(), online: false, color });
-  broadcast('joined', { name, color, count: state.players.size });
-  pushState();
+  room.players.set(id, { id, name, ip, score: 0, streak: 0, best: 0, answers: new Map(), online: false, color });
+  broadcast('joined', { name, color, count: room.players.size });
+  pushState(room);
   return { ok: true, id, name, color };
 }
 
@@ -776,24 +788,25 @@ async function handle(req, res) {
     });
     res.write('retry: 1500\n\n');
     const id = ++sseId;
-    const entry = { res, role, playerId: state.players.has(playerId) ? playerId : null };
+    const room = THE_ROOM;
+    const entry = { res, role, playerId: room.players.has(playerId) ? playerId : null };
     clients.set(id, entry);
-    if (entry.playerId) state.players.get(entry.playerId).online = true;
-    sseSend(entry, 'state', role === 'host' ? hostView() : playerView(entry.playerId));
+    if (entry.playerId) room.players.get(entry.playerId).online = true;
+    sseSend(entry, 'state', role === 'host' ? hostView(room) : playerView(room, entry.playerId));
     const ping = setInterval(() => res.write(': ping\n\n'), 15000);
     req.on('close', () => {
       clearInterval(ping);
       clients.delete(id);
       if (entry.playerId) {
         const still = [...clients.values()].some((c) => c.playerId === entry.playerId);
-        const pl = state.players.get(entry.playerId);
-        if (pl && !still) { pl.online = false; pushState(); }
+        const pl = room.players.get(entry.playerId);
+        if (pl && !still) { pl.online = false; pushState(room); }
       }
     });
     return;
   }
 
-  if (p === '/api/room') return sendJson(res, 200, { room: ROOM, title: quiz.title, phase: state.phase });
+  if (p === '/api/room') return sendJson(res, 200, { room: THE_ROOM.code, title: THE_ROOM.quiz.title, phase: THE_ROOM.phase });
 
   // modelo de questionário para baixar e editar
   if (p === '/api/template') {
@@ -813,35 +826,38 @@ async function handle(req, res) {
     const body = await readBody(req, p === '/api/host/quiz' ? 4e6 : 1e5);
     if (body.__tooBig) return sendJson(res, 413, { ok: false, error: 'arquivo grande demais (máx 4 MB)' });
     if (body.__badJson) return sendJson(res, 400, { ok: false, error: 'não consegui ler o JSON — confira vírgulas e chaves' });
+    // a sala é resolvida DEPOIS do await: entre ler o corpo e despachar, ela
+    // pode ter sido derrubada (no passo 3 isso vira lookup pelo código)
+    const room = THE_ROOM;
     switch (p) {
       case '/api/host/quiz': {
-        const r = installQuiz(body.quiz);
+        const r = installQuiz(room, body.quiz);
         return sendJson(res, r.ok ? 200 : 400, r);
       }
       case '/api/host/quiz/default': {
-        const r = restoreDefaultQuiz();
+        const r = restoreDefaultQuiz(room);
         return sendJson(res, r.ok ? 200 : 400, r);
       }
-      case '/api/join': return sendJson(res, 200, join(body.name, clientIp(req)));
-      case '/api/answer': return sendJson(res, 200, submitAnswer(body.id, body, clientIp(req)));
-      case '/api/host/next': next(); return sendJson(res, 200, { ok: true });
-      case '/api/host/prev': prev(); return sendJson(res, 200, { ok: true });
+      case '/api/join': return sendJson(res, 200, join(room, body.name, clientIp(req)));
+      case '/api/answer': return sendJson(res, 200, submitAnswer(room, body.id, body, clientIp(req)));
+      case '/api/host/next': next(room); return sendJson(res, 200, { ok: true });
+      case '/api/host/prev': prev(room); return sendJson(res, 200, { ok: true });
       case '/api/host/start': // vai para o enunciado (sem relógio)
-        showPrompt(Number.isInteger(body.index) ? body.index : 0);
+        showPrompt(room, Number.isInteger(body.index) ? body.index : 0);
         return sendJson(res, 200, { ok: true });
       case '/api/host/options': // libera as alternativas e inicia a contagem
-        startQuestion(Number.isInteger(body.index) ? body.index : state.index);
+        startQuestion(room, Number.isInteger(body.index) ? body.index : room.index);
         return sendJson(res, 200, { ok: true });
-      case '/api/host/reveal': reveal(); return sendJson(res, 200, { ok: true });
+      case '/api/host/reveal': reveal(room); return sendJson(res, 200, { ok: true });
       case '/api/host/lock':
-        if (state.phase === PHASE.QUESTION) { lockQuestion(); goto(PHASE.QUESTION); }
+        if (room.phase === PHASE.QUESTION) { lockQuestion(room); goto(room, PHASE.QUESTION); }
         return sendJson(res, 200, { ok: true });
-      case '/api/host/scores': lockQuestion(); goto(PHASE.SCORES); return sendJson(res, 200, { ok: true });
-      case '/api/host/lobby': lockQuestion(); state.index = -1; goto(PHASE.LOBBY); return sendJson(res, 200, { ok: true });
-      case '/api/host/reset': return sendJson(res, 200, resetGame(!!body.hard));
+      case '/api/host/scores': lockQuestion(room); goto(room, PHASE.SCORES); return sendJson(res, 200, { ok: true });
+      case '/api/host/lobby': lockQuestion(room); room.index = -1; goto(room, PHASE.LOBBY); return sendJson(res, 200, { ok: true });
+      case '/api/host/reset': return sendJson(res, 200, resetGame(room, !!body.hard));
       case '/api/host/kick':
-        state.players.delete(body.playerId);
-        pushState();
+        room.players.delete(body.playerId);
+        pushState(room);
         return sendJson(res, 200, { ok: true });
       default: return sendJson(res, 404, { ok: false, error: 'not found' });
     }
@@ -894,7 +910,7 @@ function guard(kind) {
       process.exit(1);
     }
     console.log(`  !! ${kind} ignorado para manter a sala no ar: ${e.stack || e.message}`);
-    saveSessionNow();
+    saveSessionNow(THE_ROOM);
   };
 }
 process.on('uncaughtException', guard('erro'));
@@ -902,7 +918,7 @@ process.on('unhandledRejection', guard('rejeição'));
 
 for (const sinal of ['SIGINT', 'SIGTERM']) {
   process.on(sinal, () => {
-    saveSessionNow();
+    saveSessionNow(THE_ROOM);
     console.log('\n  sessão salva em session.json — subindo de novo, a sala volta como estava.');
     process.exit(0);
   });
@@ -911,11 +927,12 @@ for (const sinal of ['SIGINT', 'SIGTERM']) {
 server.listen(PORT, () => {
   listening = true;
   const ips = lanAddresses();
-  const retomada = restoreSession();
+  const retomada = restoreSession(THE_ROOM);
+  const quiz = THE_ROOM.quiz;
   console.log('');
   console.log(`  ${quiz.title}`);
   if (quiz.missing) {
-    console.log(`  sala: ${ROOM}   ·   SEM QUESTIONÁRIO`);
+    console.log(`  sala: ${THE_ROOM.code}   ·   SEM QUESTIONÁRIO`);
     console.log('');
     if (process.env.QUESTIONS) {
       console.log(`  QUESTIONS aponta para ${process.env.QUESTIONS}, que não pôde ser lido.`);
@@ -927,7 +944,7 @@ server.listen(PORT, () => {
       console.log('  Abra a tela do apresentador, baixe o modelo e carregue seu JSON por lá.');
     }
   } else {
-    console.log(`  sala: ${ROOM}   ·   ${quiz.questions.length} perguntas   ·   ${quiz.blocks.length} bloco(s)   ·   ${quiz.source}`);
+    console.log(`  sala: ${THE_ROOM.code}   ·   ${quiz.questions.length} perguntas   ·   ${quiz.blocks.length} bloco(s)   ·   ${quiz.source}`);
   }
   if (retomada) {
     console.log('');
