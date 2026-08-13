@@ -176,6 +176,12 @@ function makeRoom(quiz, code = makeCode(5)) {
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     quiz,
+    // A senha nunca é guardada — só o sal e o hash. Os tokens são o que o
+    // navegador do apresentador carrega, para a senha não ficar em localStorage.
+    passSalt: null,
+    passHash: null,
+    /** @type {Map<string, {createdAt:number,lastSeenAt:number}>} */
+    tokens: new Map(),
     phase: PHASE.LOBBY,
     index: -1,
     /** @type {Map<string, {id:string,name:string,score:number,streak:number,best:number,answers:Map<string,object>,online:boolean,color:string}>} */
@@ -197,10 +203,74 @@ function makeRoom(quiz, code = makeCode(5)) {
 /** @type {Map<string, ReturnType<typeof makeRoom>>} */
 const rooms = new Map();
 
-// Ainda uma sala só — o roteamento por código entra no passo seguinte. O nome
-// gritado é de propósito: enquanto existir, marca o que falta escopar.
+// -------------------------------------------------------------------- senha
+// O código da sala não é credencial: ele vai no projetor e no QR, e 32^5 é
+// varrível em horas. Quem protege a apresentação é a senha.
+
+const SCRYPT_KEYLEN = 64;
+
+// scrypt é memory-hard e vem no core. A versão assíncrona é obrigatória no
+// caminho quente: a síncrona custa ~70-100 ms e este servidor é single-thread,
+// então um login travaria o relógio de todas as outras salas.
+function derive(password, salt) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, SCRYPT_KEYLEN, (err, key) => (err ? reject(err) : resolve(key)));
+  });
+}
+
+// Só no boot, quando ninguém está sendo atendido ainda.
+function setPasswordSync(room, password) {
+  room.passSalt = crypto.randomBytes(16);
+  room.passHash = crypto.scryptSync(password, room.passSalt, SCRYPT_KEYLEN);
+}
+
+async function setPassword(room, password) {
+  const salt = crypto.randomBytes(16);
+  room.passHash = await derive(password, salt);
+  room.passSalt = salt;
+}
+
+async function checkPassword(room, password) {
+  if (!room.passHash || typeof password !== 'string' || !password) return false;
+  try {
+    // timingSafeEqual lança se os tamanhos diferirem; aqui ambos vêm de
+    // keylen 64, mas o try/catch fecha a porta de qualquer forma
+    return crypto.timingSafeEqual(await derive(password, room.passSalt), room.passHash);
+  } catch {
+    return false;
+  }
+}
+
+function issueToken(room) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  room.tokens.set(token, { createdAt: Date.now(), lastSeenAt: Date.now() });
+  return token;
+}
+
+// O token é opaco e de 256 bits: lookup direto no Map basta, não há segredo a
+// comparar caractere a caractere. Vários tokens vivos por sala é intencional —
+// o notebook do projetor e o celular do apresentador controlam ao mesmo tempo.
+function isHost(room, token) {
+  const rec = token && room.tokens.get(token);
+  if (!rec) return false;
+  rec.lastSeenAt = Date.now();
+  return true;
+}
+
+// EventSource não manda headers, então no SSE o token vem na query. É token de
+// sessão, não a senha — e por isso o log de erro não pode imprimir a URL.
+function hostToken(req, url) {
+  return req.headers['x-host-token'] || url.searchParams.get('t') || '';
+}
+
+// Ainda uma sala só, criada no boot a partir do questions.json. A criação por
+// upload entra no passo seguinte e é quando o nome gritado desaparece.
 const THE_ROOM = makeRoom(loadQuiz(), process.env.ROOM || makeCode(5));
 rooms.set(THE_ROOM.code, THE_ROOM);
+
+// Senha do apresentador: da env, ou sorteada e impressa uma vez no console.
+// Nunca é gravada em lugar nenhum — só o sal e o hash ficam na sala.
+const BOOT_PASSWORD = process.env.HOST_PASSWORD || makeCode(10);
 
 // ------------------------------------------------------- sessão salva em disco
 // Fechar o terminal no meio do workshop não pode custar a pontuação da sala.
@@ -774,7 +844,9 @@ function serveStatic(res, urlPath) {
 const server = http.createServer((req, res) => {
   // uma requisição estranha não pode levar o processo embora no meio do workshop
   handle(req, res).catch((e) => {
-    console.log(`  !! erro em ${req.method} ${req.url}: ${e && e.stack ? e.stack : e}`);
+    // só o caminho, nunca a query: o token do apresentador viaja em ?t= no SSE
+    const alvo = String(req.url || '').split('?')[0];
+    console.log(`  !! erro em ${req.method} ${alvo}: ${e && e.stack ? e.stack : e}`);
     try {
       if (!res.headersSent) sendJson(res, 500, { ok: false, error: 'erro interno' });
       else res.end();
@@ -818,6 +890,11 @@ async function handle(req, res) {
     // 404 antes dos headers de event-stream: assim o cliente distingue "sala
     // encerrada" de "rede caiu" e para de reconectar a cada 1,5 s
     if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou' });
+    // o stream do apresentador entrega o enunciado e as alternativas, que o
+    // produto esconde de proposito do celular do participante — proteger só os
+    // POSTs deixaria a porta da frente aberta
+    if (role === 'host' && !isHost(room, hostToken(req, url)))
+      return sendJson(res, 401, { ok: false, error: 'senha necessária' });
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -877,7 +954,23 @@ async function handle(req, res) {
     // pode ter sido derrubada pela expiração
     const room = resolveRoom(req, url, body);
     if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou' });
+
+    // trocar a senha por um token é a única rota /api/host/* que dispensa token
+    if (p === '/api/host/login') {
+      const ok = await checkPassword(room, body.password);
+      if (!ok) return sendJson(res, 401, { ok: false, error: 'senha incorreta' });
+      return sendJson(res, 200, { ok: true, room: room.code, token: issueToken(room) });
+    }
+
+    // todo o controle da apresentação exige token — inclusive kick e reset,
+    // que são destrutivos e hoje não pediam nada
+    if (p.startsWith('/api/host/') && !isHost(room, hostToken(req, url)))
+      return sendJson(res, 401, { ok: false, error: 'senha necessária' });
+
     switch (p) {
+      case '/api/host/logout':
+        room.tokens.delete(hostToken(req, url));
+        return sendJson(res, 200, { ok: true });
       case '/api/host/quiz': {
         const r = installQuiz(room, body.quiz);
         return sendJson(res, r.ok ? 200 : 400, r);
@@ -979,6 +1072,8 @@ for (const sinal of ['SIGINT', 'SIGTERM']) {
 server.listen(PORT, () => {
   listening = true;
   const ips = lanAddresses();
+  // no boot ninguém está sendo atendido ainda: a versão síncrona não atrapalha
+  setPasswordSync(THE_ROOM, BOOT_PASSWORD);
   const retomada = restoreSession(THE_ROOM);
   const quiz = THE_ROOM.quiz;
   console.log('');
@@ -1003,6 +1098,12 @@ server.listen(PORT, () => {
     console.log(`  sessão retomada (salva há ${retomada.minutos} min): ${retomada.players} participante(s), `
       + `${retomada.index >= 0 ? `pergunta ${retomada.index + 1}` : 'lobby'}, fase ${retomada.phase}`);
     console.log('  os participantes reconectam sozinhos · "Zerar ranking" limpa tudo');
+  }
+  console.log('');
+  if (process.env.HOST_PASSWORD) {
+    console.log('  senha do apresentador: a que você definiu em HOST_PASSWORD');
+  } else {
+    console.log(`  senha do apresentador: ${BOOT_PASSWORD}   <-- anote, só aparece aqui`);
   }
   console.log('');
   console.log(`  apresentador : http://localhost:${PORT}/host`);

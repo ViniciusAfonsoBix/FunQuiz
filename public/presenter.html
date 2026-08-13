@@ -898,11 +898,19 @@ function maybeRender() {
 // ----------------------------------------------------------------- transport
 // Sala vinda da URL (?r=CODIGO). Sem ela o servidor resolve a sala única, que é
 // o caminho de compatibilidade enquanto a criação por upload não existe.
-const ROOM = (new URLSearchParams(location.search).get('r') || '').toUpperCase();
+let ROOM = (new URLSearchParams(location.search).get('r') || '').toUpperCase();
+
+// O token fica no navegador, escopado por sala; a senha nunca é guardada. Assim
+// recarregar a página no mesmo aparelho não pede senha de novo no meio da
+// apresentação, e noutro aparelho pede.
+const tokenKey = () => 'funquiz.host.' + ROOM;
+let TOKEN = '';
 
 let es = null, banner = null;
 function connect() {
-  es = new EventSource('/events?role=host' + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''));
+  es = new EventSource('/events?role=host'
+    + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '')
+    + (TOKEN ? '&t=' + encodeURIComponent(TOKEN) : ''));
   es.addEventListener('state', (e) => {
     const wasReveal = S && S.phase === 'reveal';
     S = JSON.parse(e.data);
@@ -926,6 +934,15 @@ function connect() {
   es.addEventListener('allin', () => toast('todos responderam ✓'));
   es.onopen = () => { if (banner) { banner.remove(); banner = null; } };
   es.onerror = () => {
+    // o servidor recusa e fecha quando o token não vale; a sala já foi
+    // confirmada no boot, então stream fechado aqui significa autenticação
+    if (es.readyState === EventSource.CLOSED) {
+      es.close();
+      if (banner) { banner.remove(); banner = null; }
+      localStorage.removeItem(tokenKey());
+      TOKEN = '';
+      return renderLogin('sua sessão expirou — digite a senha de novo');
+    }
     if (!banner) {
       banner = document.createElement('div');
       banner.className = 'offline';
@@ -934,16 +951,92 @@ function connect() {
     }
   };
 }
-connect();
+
+function renderLogin(err) {
+  setBody(`
+    <div class="lobby">
+      <div>
+        <h1>Controlar a apresentação</h1>
+        <p class="sub">sala <b class="mono">${esc(ROOM)}</b></p>
+        <div class="quiz empty">
+          <div class="ask">
+            <div class="ask-t">Senha do apresentador</div>
+            <p class="ask-p">A senha protege o controle da apresentação: sem ela,
+              qualquer pessoa com o código da sala poderia revelar respostas ou pular perguntas.</p>
+            <div class="line">
+              <input type="password" id="pw" placeholder="senha" autocomplete="current-password"
+                     style="flex:1;min-width:220px;padding:12px 14px;border-radius:10px;border:1px solid #6b5b95;background:#241640;color:#fff;font:inherit">
+              <button class="btn primary" id="bLogin">Entrar</button>
+            </div>
+            <div class="msg${err ? ' err' : ''}" id="loginMsg">${err ? esc(err) : ''}</div>
+          </div>
+        </div>
+      </div>
+    </div>`);
+  const input = document.querySelector('#pw');
+  input.focus();
+  const submit = async () => {
+    const password = input.value;
+    if (!password) return;
+    document.querySelector('#bLogin').disabled = true;
+    const r = await fetch('/api/host/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ room: ROOM, password }),
+    }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+    if (r.ok) {
+      ROOM = r.room;
+      TOKEN = r.token;
+      localStorage.setItem(tokenKey(), TOKEN);
+      connect();
+    } else {
+      renderLogin(r.error || 'senha incorreta');
+    }
+  };
+  document.querySelector('#bLogin').onclick = submit;
+  input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+}
+
+// Descobre a sala antes de qualquer coisa: com o código em mãos dá para saber
+// se já existe token guardado para ela, e um stream recusado depois disso só
+// pode ser senha — não sala inexistente.
+(async function boot() {
+  const info = await fetch('/api/room' + (ROOM ? '?room=' + encodeURIComponent(ROOM) : ''))
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!info || !info.room) {
+    setBody(`
+      <div class="lobby"><div>
+        <h1>Sala não encontrada</h1>
+        <p class="sub">O código <b class="mono">${esc(ROOM || '—')}</b> não existe ou a sala já foi encerrada.</p>
+      </div></div>`);
+    return;
+  }
+  ROOM = info.room;
+  TOKEN = localStorage.getItem(tokenKey()) || '';
+  if (!TOKEN) return renderLogin();
+  connect();
+})();
 
 // ------------------------------------------------------------------ controls
 // Ponto único por onde passa todo o controle da apresentação: é aqui que a sala
-// (e, no passo seguinte, o token do apresentador) entram nos cabeçalhos.
-const post = (p, b) => fetch(p, {
-  method: 'POST',
-  headers: Object.assign({ 'Content-Type': 'application/json' }, ROOM ? { 'X-Room': ROOM } : {}),
-  body: JSON.stringify(b || {}),
-});
+// e o token do apresentador entram nos cabeçalhos.
+const post = async (p, b) => {
+  const r = await fetch(p, {
+    method: 'POST',
+    headers: Object.assign(
+      { 'Content-Type': 'application/json' },
+      ROOM ? { 'X-Room': ROOM } : {},
+      TOKEN ? { 'X-Host-Token': TOKEN } : {},
+    ),
+    body: JSON.stringify(b || {}),
+  });
+  if (r.status === 401) {
+    localStorage.removeItem(tokenKey());
+    TOKEN = '';
+    if (es) es.close();
+    renderLogin('sua sessão expirou — digite a senha de novo');
+  }
+  return r;
+};
 $('#bNext').onclick = () => post('/api/host/next');
 $('#bPrev').onclick = () => post('/api/host/prev');
 $('#bScores').onclick = () => post('/api/host/scores');
