@@ -166,6 +166,21 @@ async function regressao() {
     ok('volta ao lobby preservando o placar',
       host.state.phase === 'lobby' && host.state.leaderboard.some((r) => r.score > 0), `phase=${host.state.phase}`);
 
+    // do ranking, "Voltar" tem de cair no reveal da pergunta que acabou de sair,
+    // não no enunciado da pergunta anterior
+    await req(P, 'POST', '/api/host/start', { index: 0 }, h);
+    await req(P, 'POST', '/api/host/options', { index: 0 }, h);
+    await req(P, 'POST', '/api/host/reveal', {}, h);
+    await req(P, 'POST', '/api/host/scores', {}, h);
+    await espera(250);
+    const idxNoRanking = host.state.index;
+    ok('chegou ao ranking', host.state.phase === 'scores', `phase=${host.state.phase}`);
+    await req(P, 'POST', '/api/host/prev', {}, h);
+    await espera(250);
+    ok('voltar do ranking cai no reveal da mesma pergunta',
+      host.state.phase === 'reveal' && host.state.index === idxNoRanking,
+      `phase=${host.state.phase} index=${host.state.index} (esperado reveal/${idxNoRanking})`);
+
     await req(P, 'POST', '/api/host/reset', { hard: false }, h);
     await espera(200);
     ok('reset zera o placar', host.state.leaderboard.every((r) => r.score === 0), JSON.stringify(host.state.leaderboard));
