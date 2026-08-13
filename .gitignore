@@ -1,0 +1,5 @@
+# estado de execução, não código: salas ativas e questionário enviado pela tela
+rooms.json
+session.json
+uploaded-questions.json
+node_modules/

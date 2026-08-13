@@ -164,7 +164,25 @@ const shape = (i) => `<svg viewBox="0 0 40 40" fill="#fff">${SHAPES[i % 4]}</svg
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-let S = null, pid = localStorage.getItem('pollPid') || null, sig = '', pending = null;
+// A sala vem da URL (?r=CODIGO), que é o que o QR do projetor codifica. Sem ela
+// o participante digita o código na mão — quem está longe da tela ou cuja câmera
+// falhou precisa desse caminho.
+let ROOM = (new URLSearchParams(location.search).get('r') || '').toUpperCase();
+
+// O pid é escopado por sala: a mesma pessoa participa de salas diferentes sem
+// que a identidade de uma vaze na outra. A chave antiga, de quando só existia
+// uma sala, é aproveitada uma vez e some.
+const pidKey = () => 'pollPid:' + ROOM;
+function readPid() {
+  if (!ROOM) return null;
+  const atual = localStorage.getItem(pidKey());
+  if (atual) return atual;
+  const legado = localStorage.getItem('pollPid');
+  if (legado) { localStorage.setItem(pidKey(), legado); localStorage.removeItem('pollPid'); return legado; }
+  return null;
+}
+
+let S = null, pid = readPid(), sig = '', pending = null;
 let gridOnScreen = false; // a grade de respostas está (ou acabou de estar) na tela
 
 // ------------------------------------------------------------------- rendering
@@ -221,11 +239,12 @@ function renderJoin(err) {
     if (!name) return;
     $('#join').disabled = true;
     const r = await fetch('/api/join', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, room: ROOM }),
     }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
     if (r.ok) {
       pid = r.id;
-      localStorage.setItem('pollPid', pid);
+      localStorage.setItem(pidKey(), pid);
       sig = '';
       if (r.reclaimed) notice(`bem-vindo de volta, ${r.name} — ${r.score} pontos recuperados`);
       reconnect();
@@ -391,20 +410,29 @@ function burst(n) {
 const send = (b) =>
   fetch('/api/answer', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(Object.assign({ id: pid }, b)),
+    body: JSON.stringify(Object.assign({ id: pid, room: ROOM }, b)),
   }).then((r) => r.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
 
 let es = null, banner = null;
 function reconnect() {
   if (es) es.close();
-  es = new EventSource('/events?role=player' + (pid ? '&pid=' + encodeURIComponent(pid) : ''));
+  if (!ROOM) return renderCode();
+  es = new EventSource('/events?room=' + encodeURIComponent(ROOM) + '&role=player'
+    + (pid ? '&pid=' + encodeURIComponent(pid) : ''));
   es.addEventListener('state', (e) => {
     S = JSON.parse(e.data);
-    if (!S.joined && pid) { localStorage.removeItem('pollPid'); pid = null; }
+    if (!S.joined && pid) { localStorage.removeItem(pidKey()); pid = null; }
     view();
   });
   es.onopen = () => { if (banner) { banner.remove(); banner = null; } };
   es.onerror = () => {
+    // o servidor responde 404 e fecha quando a sala não existe mais; aí
+    // reconectar a cada 1,5s só gastaria bateria e mentiria para o participante
+    if (es.readyState === EventSource.CLOSED) {
+      es.close();
+      if (banner) { banner.remove(); banner = null; }
+      return renderCode('essa sala foi encerrada');
+    }
     if (!banner) {
       banner = document.createElement('div');
       banner.className = 'offline';
@@ -413,6 +441,36 @@ function reconnect() {
     }
   };
 }
+
+// tela de entrar pelo código, para quem não veio pelo QR
+function renderCode(err) {
+  $('#hd').hidden = true;
+  $('#ft').textContent = '';
+  sig = 'code';
+  setPane(`
+    <div class="mid">
+      <div class="form">
+        <div class="look">entrar na sala</div>
+        <h2 style="margin-bottom:18px">Digite o código</h2>
+        <input id="rm" placeholder="ex.: K7P2Q" maxlength="8" autocomplete="off"
+               autocapitalize="characters" spellcheck="false" enterkeyhint="go"
+               style="text-transform:uppercase;letter-spacing:.18em;text-align:center">
+        <button class="go" id="enter">Continuar</button>
+        <div class="err" id="err">${err ? esc(err) : ''}</div>
+      </div>
+    </div>`);
+  const input = $('#rm');
+  input.focus();
+  const submit = () => {
+    const code = input.value.trim().toUpperCase();
+    if (!/^[A-Z2-9]{5,8}$/.test(code)) { $('#err').textContent = 'código inválido'; return; }
+    // recarrega com ?r= para que atualizar a página continue funcionando
+    location.search = '?r=' + code;
+  };
+  $('#enter').onclick = submit;
+  input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+}
+
 reconnect();
 </script>
 </body>

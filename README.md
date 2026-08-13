@@ -4,21 +4,43 @@ Servidor + cliente, **zero dependências** (só Node ≥ 18). A pergunta e as
 alternativas aparecem **só na tela do apresentador**; no celular o participante vê
 apenas as formas/letras coloridas e toca na sua resposta.
 
+Várias apresentações rodam ao mesmo tempo no mesmo servidor: cada JSON enviado
+cria uma **sala** com código próprio, protegida por senha, apagada 24 h depois da
+última atividade.
+
 ## Rodar
 
 ```bash
-node server.js
+npm start
 ```
 
 | tela | URL |
 | --- | --- |
-| apresentador (projetor) | `http://localhost:3000/host` |
-| participante (celular) | `http://SEU_IP:3000/play` |
+| criar uma sala | `http://localhost:3000/host` |
+| controlar uma sala | `http://localhost:3000/host?r=CODIGO` |
+| participante (celular) | `http://SEU_IP:3000/play?r=CODIGO` |
 
-O console imprime o IP da rede local. A tela de lobby mostra **QR code + URL +
-código da sala** — é isso que a plateia usa para entrar.
+Abrir `/host` mostra o formulário de **nova sala**: escolha o `.json` das
+perguntas e uma senha. O servidor devolve o código e já leva para a tela de
+controle. O lobby mostra **QR code + URL + código** — é isso que a plateia usa
+para entrar; quem não conseguir ler o QR abre `/play` e digita o código.
 
-Porta e arquivo de perguntas: `PORT=8080 QUESTIONS=outro.json node server.js`
+No boot o servidor também cria uma sala a partir do `questions.json` do projeto,
+para dar para brincar sem subir arquivo nenhum. O console imprime o código, a
+senha e as URLs prontas.
+
+Porta e arquivo de perguntas: `PORT=8080 QUESTIONS=outro.json npm start`
+
+## Verificar
+
+```bash
+npm test
+```
+
+Sobe servidores isolados e roda ~100 verificações em cerca de 20 s: o fluxo
+completo de uma sala, o roteamento por código, a autenticação, o isolamento
+entre duas salas simultâneas, os tetos e a persistência. Sem framework e sem
+dependências, como o resto do projeto.
 
 ## Controles do apresentador
 
@@ -62,34 +84,63 @@ imprime os mesmos motivos no boot). Depois do upload, tudo segue normalmente.
 Com `QUESTIONS=…` apontando para um arquivo ilegível o upload continua desligado
 (a variável manda) — a tela explica isso e pede para corrigir o caminho.
 
-## Trocar o questionário sem editar arquivo
+## Salas, senha e expiração
+
+Cada JSON enviado em `/host` vira uma sala nova, com **código de 6 caracteres** e
+senha escolhida por quem cria.
+
+- **O código não é credencial.** Ele aparece no projetor e no QR, e existe para a
+  plateia entrar. Quem protege a apresentação é a senha: todas as rotas de
+  controle (avançar, revelar, zerar, remover participante) e o próprio stream do
+  apresentador exigem autenticação.
+- **A senha nunca é guardada** — nem no servidor, nem no navegador. O servidor
+  guarda sal e hash (scrypt); o navegador guarda um token de sessão. Recarregar a
+  página no mesmo aparelho não pede senha de novo; noutro aparelho, pede.
+- **Senha perdida não tem recuperação.** Sem ela e sem o navegador que criou a
+  sala, o caminho é criar outra.
+- **A sala é apagada 24 h depois da última atividade** — qualquer interação
+  reinicia o relógio, então uma apresentação em curso não morre no meio.
+
+Tetos, porque criar sala é anônimo: 20 salas no servidor, 2 por IP, uma criação
+por IP por minuto, 100 perguntas por quiz, 100 participantes por sala, 512 KB de
+JSON. Estourar o teto de salas responde `503` — a sala mais antiga **não** é
+despejada, senão bastaria criar salas para derrubar um workshop alheio.
+
+## Trocar o questionário de uma sala
 
 No lobby da tela do apresentador tem um painel com o questionário atual
-(quantas perguntas, quantos blocos, qual arquivo):
+(quantas perguntas, quantos blocos):
 
 - **Carregar JSON…** ou **arraste um `.json` no painel** — valida, troca na hora e
-  zera a pontuação. Se a sala não estiver limpa (alguém já pontuou, ou há pergunta
-  em jogo) ele pede confirmação dizendo o que será perdido. Se o arquivo tiver problema, nada muda e a lista de erros
-  aparece por pergunta (`pergunta 3: "answer" precisa ser o índice da correta…`).
+  zera a pontuação **daquela sala**. Se a sala não estiver limpa (alguém já
+  pontuou, ou há pergunta em jogo) ele pede confirmação dizendo o que será
+  perdido. Se o arquivo tiver problema, nada muda e a lista de erros aparece por
+  pergunta (`pergunta 3: "answer" precisa ser o índice da correta…`).
 - **Baixar modelo** — botão que baixa `modelo-perguntas.json`, um exemplo
   comentado com todos os campos (`GET /api/template`, serve o `template.json`).
-- O upload é gravado em `uploaded-questions.json` e passa a ser carregado no
-  boot, então reiniciar no meio do workshop não perde o questionário.
-  **Restaurar padrão** apaga esse arquivo e volta para o `questions.json` — o
-  botão só aparece quando existe um `questions.json` para voltar.
+- O questionário pertence à sala e vai para o disco junto com ela. Não existe
+  arquivo global de upload: era justamente onde duas salas se atropelariam.
 - Se o servidor foi iniciado com `QUESTIONS=…`, o upload é recusado (a variável
   manda) — troque o arquivo ou reinicie sem ela.
 
-## Se o servidor cair, a sala volta
+## Se o servidor cair, as salas voltam
 
-A cada mudança de estado o servidor grava `session.json` (participantes,
+A cada mudança de estado o servidor grava `rooms.json` (salas, participantes,
 pontuação, respostas dadas, pergunta atual) — em rajadas agrupadas de 800 ms, e
 também na hora ao receber `Ctrl-C`. Subindo de novo, ele **retoma sozinho**:
 
 ```
-sessão retomada (salva há 3 min): 12 participante(s), pergunta 7, fase prompt
-os participantes reconectam sozinhos · "Zerar ranking" limpa tudo
+2 sala(s) retomada(s) do rooms.json:
+  K7P2QM · Workshop 4 · 12 participante(s) · fase prompt
+os participantes reconectam sozinhos · a senha continua a mesma
 ```
+
+> **Em hospedagem gratuita isso não vale.** No plano free da Render (e
+> semelhantes) o disco é efêmero e o serviço hiberna depois de ~15 min sem
+> tráfego: o `rooms.json` não sobrevive a uma hibernação nem a um deploy. Lá o
+> snapshot só cobre o restart dentro do mesmo container. A tela de criar sala
+> avisa o apresentador disso em vez de prometer 24 h que o plano não entrega —
+> para algo que precise durar, é plano pago com disco persistente.
 
 Detalhes que importam:
 
@@ -98,14 +149,19 @@ Detalhes que importam:
   resposta registrada e não responde de novo.
 - Todos voltam como desconectados até o celular reabrir o stream (o `localStorage`
   faz isso sozinho ao recarregar).
-- A sessão é descartada se tiver **mais de 12 h** ou se o questionário mudou (a
-  comparação é pelos ids das perguntas) — pontuação de outro quiz não faz sentido.
-- **Zerar ranking** com `hard` apaga o arquivo; o zerar normal sobrescreve com o
-  estado limpo.
+- Uma sala é descartada no boot se já passou das **24 h** sem atividade, ou se o
+  questionário dela não valida mais.
+- O token do apresentador sobrevive ao restart, então quem estava controlando
+  continua sem redigitar a senha.
+- O formato antigo (`session.json`, de quando havia uma sala só) é ignorado de
+  propósito: era uma sala sem senha, e inventar uma para ela seria pior que
+  recomeçar.
 
 ## Entrar na sala e nomes repetidos
 
-O nome tem de ser único na sala, **com uma exceção: se o pedido vem do mesmo IP
+O mesmo nome pode existir em salas diferentes — a unicidade é por sala.
+
+Dentro de uma sala o nome tem de ser único, **com uma exceção: se o pedido vem do mesmo IP
 que criou aquele nome e aquele jogador está desconectado**, a pessoa recupera o
 próprio jogador — com a pontuação intacta — em vez de tomar "nome já está na
 sala". É o caso de quem trocou de aba, limpou o navegador, ficou sem bateria ou
@@ -129,6 +185,12 @@ humano alcança e um script alcança sempre.
 Isso reduz, mas não elimina, a trapaça: quem estiver **no mesmo IP** ainda pode
 forjar. A vedação completa exige token por participante emitido no join
 (não implementado).
+
+O IP em si **não é guardado**: o que fica na sala e no disco é
+`sha256(salDaSala + ip)`. As comparações acima só testam igualdade, então
+funcionam igual — e como o sal é por sala, o mesmo endereço vira hashes
+diferentes em salas diferentes, o que impede cruzar quem esteve em quais
+apresentações.
 
 ## Fluxo
 
@@ -254,7 +316,13 @@ degradê e o número do relógio piscando nos últimos 5 segundos.
 
 - Transporte é **SSE** (`/events`) + `POST` JSON; reconecta sozinho e mostra
   faixa vermelha se o servidor cair.
-- O estado vive em memória e é espelhado em `session.json` (ver acima).
+- O estado vive em memória e é espelhado em `rooms.json` (ver acima).
+- Cada sala guarda o próprio questionário, fase, participantes, relógio e
+  conexões SSE. `broadcast` recebe a sala e itera só os clientes dela — não
+  existe caminho de código capaz de mandar o estado de uma apresentação para os
+  participantes de outra.
+- O participante é lembrado por sala (`pollPid:CODIGO` no `localStorage`), então
+  participar de duas salas no mesmo aparelho não mistura as identidades.
 - O servidor não morre por exceção em requisição: o handler é embrulhado e devolve
   500, e `uncaughtException`/`unhandledRejection` são logados sem encerrar (salvando
   a sessão). Erro do próprio `listen` — porta ocupada, permissão — **encerra** com
