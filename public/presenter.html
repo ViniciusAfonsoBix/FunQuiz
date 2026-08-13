@@ -996,11 +996,91 @@ function renderLogin(err) {
   input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
 }
 
+// Criar sala: sobe o JSON e escolhe a senha. É o que /host mostra quando não há
+// código na URL.
+function renderCreate(msg) {
+  setBody(`
+    <div class="lobby">
+      <div>
+        <h1>Nova sala</h1>
+        <p class="sub">carregue as perguntas e escolha uma senha</p>
+        <div class="quiz empty">
+          <div class="ask">
+            <div class="ask-t">Perguntas</div>
+            <p class="ask-p">Um <b>.json</b> com as perguntas. Se ainda não tem, baixe o modelo, edite e traga de volta.</p>
+            <div class="line">
+              <button class="btn primary" id="bPick">Escolher JSON…</button>
+              <button class="btn" id="bTpl">Baixar modelo</button>
+              <span class="who2" id="fileName">nenhum arquivo</span>
+            </div>
+            <div class="ask-t" style="margin-top:22px">Senha do apresentador</div>
+            <p class="ask-p">Protege o controle da apresentação. Anote: <b>não há como recuperá-la</b> —
+              sem ela, e sem este navegador, a sala não volta.</p>
+            <div class="line">
+              <input type="password" id="pw" placeholder="mínimo 8 caracteres" autocomplete="new-password"
+                     style="flex:1;min-width:240px;padding:12px 14px;border-radius:10px;border:1px solid #6b5b95;background:#241640;color:#fff;font:inherit">
+              <button class="btn primary" id="bCreate">Criar sala</button>
+            </div>
+            <p class="ask-p" style="margin-top:18px;opacity:.7">
+              A sala é apagada 24h depois da última atividade — e também se o servidor
+              hibernar ou for reiniciado, o que acontece em hospedagem gratuita.
+              Para algo que precisa durar, exporte o ranking antes de fechar.</p>
+            <div class="msg" id="createMsg">${msg ? esc(msg) : ''}</div>
+            <input type="file" id="newQuiz" accept=".json,application/json" hidden>
+          </div>
+        </div>
+      </div>
+    </div>`);
+
+  let escolhido = null;
+  const say = (t, cls) => {
+    const m = document.querySelector('#createMsg');
+    m.className = 'msg ' + (cls || '');
+    m.innerHTML = esc(t);
+  };
+  document.querySelector('#bPick').onclick = () => document.querySelector('#newQuiz').click();
+  document.querySelector('#bTpl').onclick = () => {
+    const a = document.createElement('a');
+    a.href = '/api/template'; a.download = 'modelo-perguntas.json';
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  document.querySelector('#newQuiz').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!/\.json$/i.test(file.name)) return say(`"${file.name}" não é um .json`, 'err');
+    try {
+      escolhido = JSON.parse(await file.text());
+      document.querySelector('#fileName').textContent = file.name;
+      say(`"${file.name}" pronto — agora a senha.`, 'ok');
+    } catch (err) {
+      escolhido = null;
+      say('esse arquivo não é um JSON válido: ' + err.message, 'err');
+    }
+  };
+  document.querySelector('#bCreate').onclick = async () => {
+    if (!escolhido) return say('escolha o arquivo de perguntas primeiro', 'err');
+    const password = document.querySelector('#pw').value;
+    if (password.length < 8) return say('a senha precisa de pelo menos 8 caracteres', 'err');
+    say('criando…');
+    const r = await fetch('/api/rooms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quiz: escolhido, password }),
+    }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+    if (!r.ok) {
+      const detalhe = r.problems && r.problems.length ? ' — ' + r.problems.join('; ') : '';
+      return say((r.error || 'não deu') + detalhe, 'err');
+    }
+    localStorage.setItem('funquiz.host.' + r.room, r.token);
+    location.replace('/host?r=' + r.room);
+  };
+}
+
 // Descobre a sala antes de qualquer coisa: com o código em mãos dá para saber
 // se já existe token guardado para ela, e um stream recusado depois disso só
 // pode ser senha — não sala inexistente.
 (async function boot() {
-  const info = await fetch('/api/room' + (ROOM ? '?room=' + encodeURIComponent(ROOM) : ''))
+  if (!ROOM) return renderCreate();
+  const info = await fetch('/api/room?room=' + encodeURIComponent(ROOM))
     .then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!info || !info.room) {
     setBody(`

@@ -13,6 +13,21 @@ const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '')
   .trim().replace(/\/+$/, '');
 
+// --------------------------------------------------------------------- tetos
+// Criar sala é anônimo, então cada limite aqui é o que separa "workshop" de
+// "alguém enche a memória num laço de for". Os números miram os 512 MB e a
+// fração de CPU de uma instância pequena.
+// Os que têm env são os que o roteiro de verificação precisa apertar ou afrouxar
+// para caber num teste — não são botões de operação do dia a dia.
+const MAX_ROOMS = Number(process.env.MAX_ROOMS || 20);
+const MAX_ROOMS_PER_IP = Number(process.env.MAX_ROOMS_PER_IP || 2);
+const MAX_PLAYERS_PER_ROOM = Number(process.env.MAX_PLAYERS_PER_ROOM || 100);
+const MAX_QUIZ_BYTES = 512e3;   // ~1000 perguntas de texto realista
+const MAX_QUESTIONS = 100;
+const MAX_SSE_TOTAL = 400;      // o gargalo é CPU no push, não memória
+const ROOM_CREATE_MS = Number(process.env.ROOM_CREATE_MS || 60e3); // uma sala por IP por minuto
+const MIN_PASSWORD = 8;
+
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DEFAULT_FILE = path.join(ROOT, 'questions.json');
@@ -176,6 +191,8 @@ function makeRoom(quiz, code = makeCode(5)) {
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     quiz,
+    quizRaw: null,   // JSON cru do upload: é o que vai para o disco
+    ownerIp: null,   // só para o teto de salas por IP
     // A senha nunca é guardada — só o sal e o hash. Os tokens são o que o
     // navegador do apresentador carrega, para a senha não ficar em localStorage.
     passSalt: null,
@@ -261,6 +278,107 @@ function isHost(room, token) {
 // sessão, não a senha — e por isso o log de erro não pode imprimir a URL.
 function hostToken(req, url) {
   return req.headers['x-host-token'] || url.searchParams.get('t') || '';
+}
+
+// ------------------------------------------------------------- criação de sala
+
+/** @type {Map<string, number>} último instante em que cada IP criou uma sala */
+const ultimaCriacao = new Map();
+
+function contaSalasDoIp(ip) {
+  let n = 0;
+  for (const r of rooms.values()) if (r.ownerIp === ip) n++;
+  return n;
+}
+
+function codigoLivre() {
+  // 6 chars sobre alfabeto de 32 = 32^6 ≈ 1,07 bilhão. Um a mais que os 5 de
+  // antes multiplica por 32 o custo de varrer códigos, e cabe no projetor.
+  for (let i = 0; i < 50; i++) {
+    const code = makeCode(6);
+    if (!rooms.has(code)) return code;
+  }
+  return null;
+}
+
+async function createRoom(raw, password, ip) {
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD)
+    return { status: 400, body: { ok: false, error: `a senha precisa de pelo menos ${MIN_PASSWORD} caracteres` } };
+
+  if (Array.isArray(raw && raw.questions) && raw.questions.length > MAX_QUESTIONS)
+    return { status: 400, body: { ok: false, error: `no máximo ${MAX_QUESTIONS} perguntas por sala` } };
+
+  let prepared;
+  try {
+    prepared = prepareQuiz(raw);
+  } catch (e) {
+    if (e instanceof QuizError) return { status: 400, body: { ok: false, error: 'JSON inválido', problems: e.problems } };
+    return { status: 400, body: { ok: false, error: String(e.message || e) } };
+  }
+
+  const agora = Date.now();
+  const ultima = ultimaCriacao.get(ip) || 0;
+  if (agora - ultima < ROOM_CREATE_MS) {
+    const faltam = Math.ceil((ROOM_CREATE_MS - (agora - ultima)) / 1000);
+    return { status: 429, body: { ok: false, error: `espere ${faltam}s para criar outra sala` } };
+  }
+  if (contaSalasDoIp(ip) >= MAX_ROOMS_PER_IP)
+    return { status: 429, body: { ok: false, error: `você já tem ${MAX_ROOMS_PER_IP} salas abertas` } };
+
+  // varre as expiradas antes de dizer não — pode haver vaga livre
+  sweepRooms();
+  if (rooms.size >= MAX_ROOMS)
+    return { status: 503, body: { ok: false, error: 'limite de salas atingido, tente em alguns minutos' } };
+
+  const code = codigoLivre();
+  if (!code) return { status: 503, body: { ok: false, error: 'não consegui gerar um código livre' } };
+
+  const room = makeRoom(prepared, code);
+  room.quiz.source = 'upload';
+  room.quiz.missing = false;
+  room.quiz.problems = [];
+  room.quizRaw = raw;
+  room.ownerIp = ip;
+  await setPassword(room, password);
+  rooms.set(code, room);
+  ultimaCriacao.set(ip, agora);
+
+  console.log(`  sala criada: ${code} · ${room.quiz.title} · ${room.quiz.questions.length} perguntas`);
+  return { status: 200, body: { ok: true, room: code, token: issueToken(room), title: room.quiz.title, count: room.quiz.questions.length } };
+}
+
+function totalSse() {
+  let n = 0;
+  for (const r of rooms.values()) n += r.clients.size;
+  return n;
+}
+
+// ------------------------------------------------------------------ expiração
+
+const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS || 24 * 60 * 60 * 1000);
+
+// Derrubar uma sala é fechar quatro coisas, e três delas seguram referência ao
+// room inteiro. O ping é a mais fácil de esquecer: sem o clearInterval ele
+// segue escrevendo num socket morto a cada 15 s, para sempre.
+function destroyRoom(room, motivo) {
+  if (room.timer) { clearTimeout(room.timer); room.timer = null; }
+  for (const entry of room.clients.values()) {
+    clearInterval(entry.ping);
+    try { sseSend(entry, 'gone', { room: room.code, motivo }); entry.res.end(); } catch { /* já foi */ }
+  }
+  room.clients.clear();
+  room.players.clear();
+  room.tokens.clear();
+  room.memo = null;
+  rooms.delete(room.code);
+  console.log(`  sala encerrada: ${room.code} (${motivo})`);
+}
+
+function sweepRooms() {
+  const agora = Date.now();
+  for (const room of [...rooms.values()]) {
+    if (agora - room.lastActivityAt > ROOM_TTL_MS) destroyRoom(room, 'sem atividade há 24h');
+  }
 }
 
 // Ainda uma sala só, criada no boot a partir do questions.json. A criação por
@@ -766,6 +884,8 @@ function join(room, name, ip) {
   // nome repetido só passa se vier do mesmo IP que o criou — aí é a mesma pessoa
   // voltando (trocou de aba, limpou o navegador, caiu a rede) e recupera a pontuação
   const taken = [...room.players.values()].find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (!taken && room.players.size >= MAX_PLAYERS_PER_ROOM)
+    return { ok: false, error: 'a sala está lotada' };
   if (taken) {
     if (taken.ip !== ip) return { ok: false, error: 'esse nome já está na sala' };
     // mesmo IP não basta: se aquele jogador está conectado agora, ninguém assume
@@ -895,6 +1015,10 @@ async function handle(req, res) {
     // POSTs deixaria a porta da frente aberta
     if (role === 'host' && !isHost(room, hostToken(req, url)))
       return sendJson(res, 401, { ok: false, error: 'senha necessária' });
+    // acima deste teto a degradação seria silenciosa e todo mundo travaria
+    // junto; melhor recusar a conexão nova e manter as antigas fluindo
+    if (totalSse() >= MAX_SSE_TOTAL)
+      return sendJson(res, 503, { ok: false, error: 'servidor cheio, tente em instantes' });
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -916,6 +1040,9 @@ async function handle(req, res) {
     sseSend(entry, 'state', role === 'host' ? hostView(room) : playerView(room, entry.playerId));
     req.on('close', () => {
       clearInterval(entry.ping);
+      // destroyRoom fecha as respostas, e isso dispara este handler; sem a
+      // guarda, um push seria montado para uma sala que já não existe
+      if (!rooms.has(room.code)) return;
       room.clients.delete(id);
       if (entry.playerId) {
         const still = [...room.clients.values()].some((c) => c.playerId === entry.playerId);
@@ -947,9 +1074,16 @@ async function handle(req, res) {
 
   if (req.method === 'POST') {
     // o upload do questionário é o único corpo grande que aceitamos
-    const body = await readBody(req, p === '/api/host/quiz' ? 4e6 : 1e5);
-    if (body.__tooBig) return sendJson(res, 413, { ok: false, error: 'arquivo grande demais (máx 4 MB)' });
+    const grande = p === '/api/host/quiz' || p === '/api/rooms';
+    const body = await readBody(req, grande ? MAX_QUIZ_BYTES : 1e5);
+    if (body.__tooBig) return sendJson(res, 413, { ok: false, error: `arquivo grande demais (máx ${Math.round(MAX_QUIZ_BYTES / 1000)} KB)` });
     if (body.__badJson) return sendJson(res, 400, { ok: false, error: 'não consegui ler o JSON — confira vírgulas e chaves' });
+
+    // criar sala é a única rota que não pertence a nenhuma sala ainda
+    if (p === '/api/rooms') {
+      const r = await createRoom(body.quiz, body.password, clientIp(req));
+      return sendJson(res, r.status, r.body);
+    }
     // a sala é resolvida DEPOIS do await: entre ler o corpo e despachar, ela
     // pode ter sido derrubada pela expiração
     const room = resolveRoom(req, url, body);
@@ -1061,6 +1195,10 @@ function guard(kind) {
 process.on('uncaughtException', guard('erro'));
 process.on('unhandledRejection', guard('rejeição'));
 
+// Tick de 5 min: a precisão exigida é de horas. unref() para não ser este
+// intervalo o motivo de o processo nunca terminar.
+setInterval(sweepRooms, 5 * 60 * 1000).unref();
+
 for (const sinal of ['SIGINT', 'SIGTERM']) {
   process.on(sinal, () => {
     saveSessionNow(THE_ROOM);
@@ -1106,8 +1244,9 @@ server.listen(PORT, () => {
     console.log(`  senha do apresentador: ${BOOT_PASSWORD}   <-- anote, só aparece aqui`);
   }
   console.log('');
-  console.log(`  apresentador : http://localhost:${PORT}/host`);
-  console.log(`  participante : http://localhost:${PORT}/play`);
-  for (const ip of ips) console.log(`                 http://${ip}:${PORT}/play   <-- use este no projetor`);
+  console.log(`  controlar a sala do boot : http://localhost:${PORT}/host?r=${THE_ROOM.code}`);
+  console.log(`  criar outra sala         : http://localhost:${PORT}/host`);
+  console.log(`  participante             : http://localhost:${PORT}/play?r=${THE_ROOM.code}`);
+  for (const ip of ips) console.log(`                             http://${ip}:${PORT}/play?r=${THE_ROOM.code}`);
   console.log('');
 });
