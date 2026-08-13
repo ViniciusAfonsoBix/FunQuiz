@@ -183,6 +183,11 @@ function makeRoom(quiz, code = makeCode(5)) {
     questionStartedAt: 0,
     lockedAt: 0,
     timer: null,
+    // conexões SSE DESTA sala. Ficam aqui, e não num Map global com um campo
+    // "sala", porque assim não existe caminho de código capaz de mandar o
+    // estado de uma apresentação para os participantes de outra.
+    /** @type {Map<number, {res: http.ServerResponse, role: string, playerId: string|null, ping: NodeJS.Timeout}>} */
+    clients: new Map(),
     // memo de um push: ranking e apuração são iguais para todos os clientes da
     // sala, então saem calculados uma vez por rodada e não uma vez por conexão
     memo: null,
@@ -288,8 +293,6 @@ function restoreSession(room) {
 // ------------------------------------------------------------------ SSE hub
 
 let sseId = 0;
-/** @type {Map<number, {res: http.ServerResponse, role: string, playerId: string|null}>} */
-const clients = new Map();
 
 function sseSend(entry, event, data) {
   try {
@@ -299,8 +302,8 @@ function sseSend(entry, event, data) {
   }
 }
 
-function broadcast(event, dataFor) {
-  for (const entry of clients.values()) {
+function broadcast(room, event, dataFor) {
+  for (const entry of room.clients.values()) {
     const payload = typeof dataFor === 'function' ? dataFor(entry) : dataFor;
     if (payload !== null) sseSend(entry, event, payload);
   }
@@ -310,7 +313,7 @@ function pushState(room) {
   room.memo = {};
   try {
     const host = hostView(room); // idêntico para todos os apresentadores
-    broadcast('state', (entry) => (entry.role === 'host' ? host : playerView(room, entry.playerId)));
+    broadcast(room, 'state', (entry) => (entry.role === 'host' ? host : playerView(room, entry.playerId)));
   } finally {
     room.memo = null;
   }
@@ -529,7 +532,7 @@ function startQuestion(room, index) {
   }
   // sem timestamp absoluto: o relógio do apresentador pode estar dessincronizado
   // do relógio do servidor, então mandamos quanto falta e ele conta com o dele
-  broadcast('countdown', { seconds: q.seconds, untimed: !!q.untimed, secondsLeft: q.seconds });
+  broadcast(room, 'countdown', { seconds: q.seconds, untimed: !!q.untimed, secondsLeft: q.seconds });
   pushState(room);
 }
 
@@ -674,7 +677,7 @@ function submitAnswer(room, playerId, body, ip) {
   pushState(room);
   const everyone = [...room.players.values()].filter((x) => x.online);
   if (everyone.length && everyone.every((x) => x.answers.has(q.id))) {
-    broadcast('allin', { id: q.id });
+    broadcast(room, 'allin', { id: q.id });
   }
   return { ok: true };
 }
@@ -706,7 +709,7 @@ function join(room, name, ip) {
   // online é afirmado pela conexão SSE, não pelo join: um join que nunca abriu
   // o stream (fechou o celular na hora) fica removível pelo "Zerar ranking"
   room.players.set(id, { id, name, ip, score: 0, streak: 0, best: 0, answers: new Map(), online: false, color });
-  broadcast('joined', { name, color, count: room.players.size });
+  broadcast(room, 'joined', { name, color, count: room.players.size });
   pushState(room);
   return { ok: true, id, name, color };
 }
@@ -789,16 +792,22 @@ async function handle(req, res) {
     res.write('retry: 1500\n\n');
     const id = ++sseId;
     const room = THE_ROOM;
-    const entry = { res, role, playerId: room.players.has(playerId) ? playerId : null };
-    clients.set(id, entry);
+    // o ping vive na entry, não numa variável local: derrubar a sala precisa
+    // conseguir pará-lo, senão ele segue escrevendo num socket morto a cada 15 s
+    // e mantém viva a closure que referencia a resposta
+    const entry = {
+      res, role,
+      playerId: room.players.has(playerId) ? playerId : null,
+      ping: setInterval(() => res.write(': ping\n\n'), 15000),
+    };
+    room.clients.set(id, entry);
     if (entry.playerId) room.players.get(entry.playerId).online = true;
     sseSend(entry, 'state', role === 'host' ? hostView(room) : playerView(room, entry.playerId));
-    const ping = setInterval(() => res.write(': ping\n\n'), 15000);
     req.on('close', () => {
-      clearInterval(ping);
-      clients.delete(id);
+      clearInterval(entry.ping);
+      room.clients.delete(id);
       if (entry.playerId) {
-        const still = [...clients.values()].some((c) => c.playerId === entry.playerId);
+        const still = [...room.clients.values()].some((c) => c.playerId === entry.playerId);
         const pl = room.players.get(entry.playerId);
         if (pl && !still) { pl.online = false; pushState(room); }
       }
