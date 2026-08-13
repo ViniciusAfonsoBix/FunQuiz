@@ -843,10 +843,17 @@ function render() {
   $('#bNext').innerHTML = `${label} <kbd>Space</kbd>`;
   $('#bNext').disabled = S.phase === 'end' || !S.total; // sem perguntas não há o que começar
 
-  // voltar/lobby só fazem sentido com uma pergunta em jogo
+  // As telas de ranking têm barra própria: só voltar e zerar. Avançar sai junto
+  // — nelas o caminho para a próxima pergunta é a tecla Space.
+  const noRanking = S.phase === 'scores' || S.phase === 'end';
   inQuestion = ['blockintro', 'prompt', 'question', 'reveal'].includes(S.phase);
-  $('#bPrev').hidden = !inQuestion;
+  $('#bNext').hidden = noRanking;
+  $('#bPrev').hidden = !inQuestion && !noRanking;
   $('#bLobby').hidden = !inQuestion;
+  $('#bScores').hidden = noRanking;            // já estamos nele
+  // zerar a pontuação é uma decisão que se toma olhando o ranking, não no meio
+  // de uma pergunta — e ali o clique acidental custa a sessão inteira
+  $('#bReset').hidden = !noRanking;
 
   // denominador = todos na sala; quem caiu aparece à parte, senão o contador
   // passa de 100% quando alguém responde e depois perde a conexão

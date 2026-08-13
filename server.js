@@ -811,6 +811,10 @@ function next(room) {
 function prev(room) {
   if (room.phase === PHASE.QUESTION) return showPrompt(room, room.index);
   const q = currentQuestion(room);
+  // do ranking volta para o reveal da pergunta que acabou de sair — é ela a tela
+  // anterior. Sem isto o "Voltar" pularia para o enunciado da pergunta de antes
+  if ((room.phase === PHASE.SCORES || room.phase === PHASE.END) && q)
+    return goto(room, PHASE.REVEAL);
   // do enunciado volta para o slide do bloco, quando essa pergunta o abre
   if (room.phase === PHASE.PROMPT && q && q.blockPos === 1 && q.block)
     return showBlockIntro(room, room.index);
