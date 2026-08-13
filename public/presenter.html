@@ -496,9 +496,12 @@ function stopDial() {
 
 // ------------------------------------------------------------------ renderers
 function renderLobby() {
-  const FALLBACK_JOIN = 'https://funquiz-sgn7.onrender.com/play';
-  const url = (S && S.joinUrl) ? S.joinUrl : FALLBACK_JOIN;
-  const qr = `<img src="/qr.svg" alt="QR code para entrar em ${url}"/>`;
+  // Sem joinUrl o servidor não sabe o próprio endereço público (falta
+  // PUBLIC_URL): aí não há QR honesto a mostrar, e sobra o código para digitar.
+  const url = (S && S.joinUrl) || '';
+  const qr = url
+    ? `<img src="/qr.svg?room=${encodeURIComponent(S.room)}" alt="QR code para entrar em ${url}"/>`
+    : '<div class="label" style="padding:18px 10px">defina <code>PUBLIC_URL</code><br>para o QR aparecer</div>';
   const qi = S.quizInfo;
   setBody(`
     <div class="lobby">
@@ -537,7 +540,7 @@ function renderLobby() {
       <div class="join">
         <div class="qr">${qr}</div>
         <div class="label">aponte a câmera ou digite</div>
-        <div class="url">${esc(url.replace(/^https?:\/\//, ''))}</div>
+        <div class="url">${esc((url || location.origin + '/play').replace(/^https?:\/\//, ''))}</div>
         <div class="label">sala</div>
         <div class="code mono">${esc(S.room)}</div>
       </div>
@@ -893,9 +896,13 @@ function maybeRender() {
 }
 
 // ----------------------------------------------------------------- transport
+// Sala vinda da URL (?r=CODIGO). Sem ela o servidor resolve a sala única, que é
+// o caminho de compatibilidade enquanto a criação por upload não existe.
+const ROOM = (new URLSearchParams(location.search).get('r') || '').toUpperCase();
+
 let es = null, banner = null;
 function connect() {
-  es = new EventSource('/events?role=host');
+  es = new EventSource('/events?role=host' + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''));
   es.addEventListener('state', (e) => {
     const wasReveal = S && S.phase === 'reveal';
     S = JSON.parse(e.data);
@@ -930,7 +937,13 @@ function connect() {
 connect();
 
 // ------------------------------------------------------------------ controls
-const post = (p, b) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) });
+// Ponto único por onde passa todo o controle da apresentação: é aqui que a sala
+// (e, no passo seguinte, o token do apresentador) entram nos cabeçalhos.
+const post = (p, b) => fetch(p, {
+  method: 'POST',
+  headers: Object.assign({ 'Content-Type': 'application/json' }, ROOM ? { 'X-Room': ROOM } : {}),
+  body: JSON.stringify(b || {}),
+});
 $('#bNext').onclick = () => post('/api/host/next');
 $('#bPrev').onclick = () => post('/api/host/prev');
 $('#bScores').onclick = () => post('/api/host/scores');

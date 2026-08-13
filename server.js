@@ -394,6 +394,12 @@ function blockInfo(room, q) {
   };
 }
 
+// A URL que o participante abre. Sem PUBLIC_URL não dá para inventar o host —
+// a tela do apresentador mostra o código para digitar e o QR sai de cena.
+function joinUrlFor(room) {
+  return PUBLIC_URL ? `${PUBLIC_URL}/play?r=${room.code}` : '';
+}
+
 function hostView(room) {
   const q = currentQuestion(room);
   const t = tally(room);
@@ -405,7 +411,7 @@ function hostView(room) {
     total: room.quiz.questions.length,
     title: room.quiz.title,
     subtitle: room.quiz.subtitle || '',
-    joinUrl: PUBLIC_URL ? PUBLIC_URL + '/play' : '',
+    joinUrl: joinUrlFor(room),
     question: publicQuestion(q),
     reveal: room.phase === PHASE.REVEAL || room.phase === PHASE.END
       ? { answer: q ? q.answer : null, why: q ? q.why : '' }
@@ -776,6 +782,31 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// O código chega do cliente por três caminhos — header no controle do host,
+// query no SSE e no QR, corpo no join/answer do participante. A validação vem
+// antes de qualquer uso porque o código também vira nome de arquivo lá na
+// persistência, e aí um "../.." seria path traversal.
+const CODE_RE = /^[A-Z2-9]{5,8}$/;
+
+function resolveRoom(req, url, body) {
+  const raw = req.headers['x-room'] || url.searchParams.get('room') || (body && body.room) || '';
+  const code = String(raw).toUpperCase();
+  if (code) {
+    if (!CODE_RE.test(code)) return null;
+    const room = rooms.get(code);
+    if (room) room.lastActivityAt = Date.now(); // o TTL conta da última atividade
+    return room || null;
+  }
+  // Sem código: só resolve quando não há ambiguidade possível. Cobre o QR já
+  // impresso e as abas abertas de antes desta mudança.
+  if (rooms.size === 1) {
+    const room = rooms.values().next().value;
+    room.lastActivityAt = Date.now();
+    return room;
+  }
+  return null;
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
@@ -783,6 +814,10 @@ async function handle(req, res) {
   if (p === '/events') {
     const role = url.searchParams.get('role') === 'host' ? 'host' : 'player';
     const playerId = url.searchParams.get('pid');
+    const room = resolveRoom(req, url, null);
+    // 404 antes dos headers de event-stream: assim o cliente distingue "sala
+    // encerrada" de "rede caiu" e para de reconectar a cada 1,5 s
+    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou' });
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -791,7 +826,6 @@ async function handle(req, res) {
     });
     res.write('retry: 1500\n\n');
     const id = ++sseId;
-    const room = THE_ROOM;
     // o ping vive na entry, não numa variável local: derrubar a sala precisa
     // conseguir pará-lo, senão ele segue escrevendo num socket morto a cada 15 s
     // e mantém viva a closure que referencia a resposta
@@ -815,7 +849,11 @@ async function handle(req, res) {
     return;
   }
 
-  if (p === '/api/room') return sendJson(res, 200, { room: THE_ROOM.code, title: THE_ROOM.quiz.title, phase: THE_ROOM.phase });
+  if (p === '/api/room') {
+    const room = resolveRoom(req, url, null);
+    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou' });
+    return sendJson(res, 200, { ok: true, room: room.code, title: room.quiz.title, phase: room.phase });
+  }
 
   // modelo de questionário para baixar e editar
   if (p === '/api/template') {
@@ -836,8 +874,9 @@ async function handle(req, res) {
     if (body.__tooBig) return sendJson(res, 413, { ok: false, error: 'arquivo grande demais (máx 4 MB)' });
     if (body.__badJson) return sendJson(res, 400, { ok: false, error: 'não consegui ler o JSON — confira vírgulas e chaves' });
     // a sala é resolvida DEPOIS do await: entre ler o corpo e despachar, ela
-    // pode ter sido derrubada (no passo 3 isso vira lookup pelo código)
-    const room = THE_ROOM;
+    // pode ter sido derrubada pela expiração
+    const room = resolveRoom(req, url, body);
+    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou' });
     switch (p) {
       case '/api/host/quiz': {
         const r = installQuiz(room, body.quiz);
@@ -874,9 +913,13 @@ async function handle(req, res) {
 
   // Serve a dynamically generated QR SVG that points to the public join URL
   if (p === '/qr.svg') {
+    const room = resolveRoom(req, url, null);
+    const join = room && joinUrlFor(room);
+    // sem endereço público não existe QR honesto: melhor um erro do que um
+    // código que leva a lugar nenhum — ou, pior, ao servidor de outra pessoa
+    if (!join) return sendJson(res, 404, { ok: false, error: 'sem sala ou sem PUBLIC_URL para gerar o QR' });
     try {
       const QR = require(path.join(ROOT, 'public', 'qr.js'));
-      const join = PUBLIC_URL ? PUBLIC_URL + '/play' : 'https://funquiz-sgn7.onrender.com/play';
       const svg = QR.svg(join, { dark: '#14082b', light: '#ffffff', quiet: 4 });
       res.writeHead(200, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(svg);
