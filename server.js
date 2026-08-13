@@ -199,6 +199,10 @@ function makeRoom(quiz, code = makeCode(5)) {
     passHash: null,
     /** @type {Map<string, {createdAt:number,lastSeenAt:number}>} */
     tokens: new Map(),
+    // O IP do participante não é gravado em claro. O sal é por sala, então o
+    // mesmo endereço vira hashes diferentes em salas diferentes: quem olhar o
+    // arquivo não consegue cruzar quem esteve em quais apresentações.
+    ipSalt: crypto.randomBytes(16),
     phase: PHASE.LOBBY,
     index: -1,
     /** @type {Map<string, {id:string,name:string,score:number,streak:number,best:number,answers:Map<string,object>,online:boolean,color:string}>} */
@@ -223,6 +227,13 @@ const rooms = new Map();
 // -------------------------------------------------------------------- senha
 // O código da sala não é credencial: ele vai no projetor e no QR, e 32^5 é
 // varrível em horas. Quem protege a apresentação é a senha.
+
+// O IP serve só para três comparações de igualdade (recuperar nome, amarrar a
+// resposta ao aparelho); nenhuma delas precisa do endereço em si.
+function hashIp(room, ip) {
+  if (!ip) return '';
+  return crypto.createHash('sha256').update(room.ipSalt).update(String(ip)).digest('hex').slice(0, 32);
+}
 
 const SCRYPT_KEYLEN = 64;
 
@@ -371,6 +382,7 @@ function destroyRoom(room, motivo) {
   room.tokens.clear();
   room.memo = null;
   rooms.delete(room.code);
+  scheduleRoomsSave(); // sai da memória e do disco junto
   console.log(`  sala encerrada: ${room.code} (${motivo})`);
 }
 
@@ -390,92 +402,131 @@ rooms.set(THE_ROOM.code, THE_ROOM);
 // Nunca é gravada em lugar nenhum — só o sal e o hash ficam na sala.
 const BOOT_PASSWORD = process.env.HOST_PASSWORD || makeCode(10);
 
-// ------------------------------------------------------- sessão salva em disco
+// --------------------------------------------------------- salas salvas em disco
 // Fechar o terminal no meio do workshop não pode custar a pontuação da sala.
-const SESSION_FILE = path.join(ROOT, 'session.json');
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // sessão de ontem não serve para hoje
+//
+// Ressalva importante: em hospedagem gratuita (Render free e semelhantes) o
+// disco é efêmero e o serviço hiberna depois de alguns minutos sem tráfego.
+// Lá este arquivo NÃO sobrevive a uma hibernação nem a um deploy — ele cobre o
+// restart dentro do mesmo container, que é a perda mais comum no dia a dia. A
+// tela de criar sala diz isso ao apresentador em vez de prometer 24h que o
+// plano não entrega.
+const ROOMS_FILE = path.join(ROOT, 'rooms.json');
+const SNAPSHOT_V = 2;
 
-// impressão digital do questionário: pontuação de outro quiz não faz sentido
-function quizFingerprint(room) {
-  return room.quiz.missing ? 'none' : room.quiz.questions.map((q) => q.id).join(',');
-}
-
-function sessionSnapshot(room) {
+function roomSnapshot(room) {
   return {
-    savedAt: new Date().toISOString(),
-    room: room.code,
-    fingerprint: quizFingerprint(room),
+    code: room.code,
+    createdAt: room.createdAt,
+    lastActivityAt: room.lastActivityAt,
+    quizRaw: room.quizRaw,
+    passSalt: room.passSalt ? room.passSalt.toString('hex') : null,
+    passHash: room.passHash ? room.passHash.toString('hex') : null,
+    ipSalt: room.ipSalt.toString('hex'),
+    ownerIpHash: room.ownerIp ? hashIp(room, room.ownerIp) : null,
+    tokens: Object.fromEntries(room.tokens),
     index: room.index,
     phase: room.phase,
     players: [...room.players.values()].map((p) => ({
-      id: p.id, name: p.name, ip: p.ip, color: p.color,
+      id: p.id, name: p.name, ipHash: p.ipHash, color: p.color,
       score: p.score, streak: p.streak, best: p.best,
+      // Map dentro de Map: o de dentro vira objeto e volta em new Map()
       answers: Object.fromEntries(p.answers),
     })),
   };
 }
 
+function roomsSnapshot() {
+  return {
+    v: SNAPSHOT_V,
+    savedAt: new Date().toISOString(),
+    // só salas com questionário próprio: a do boot renasce do questions.json
+    rooms: [...rooms.values()].filter((r) => r.quizRaw).map(roomSnapshot),
+  };
+}
+
+// Um timer para o processo inteiro, não um por sala: N salas ativas fariam N
+// writes concorrentes do mesmo arquivo, se atropelando.
 let saveTimer = null;
 
-// agrupa rajadas de resposta num único write (o push de estado é o funil de tudo)
-function scheduleSessionSave(room) {
+function scheduleRoomsSave() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    if (!room.players.size && room.index < 0) return; // nada que valha salvar
-    fs.writeFile(SESSION_FILE, JSON.stringify(sessionSnapshot(room)), 'utf8', (err) => {
-      if (err) console.log(`  !! não consegui salvar session.json: ${err.message}`);
+    fs.writeFile(ROOMS_FILE, JSON.stringify(roomsSnapshot()), 'utf8', (err) => {
+      if (err) console.log(`  !! não consegui salvar rooms.json: ${err.message}`);
     });
   }, 800);
 }
 
-function saveSessionNow(room) {
+function saveRoomsNow() {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  if (!room.players.size && room.index < 0) return;
   try {
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionSnapshot(room)), 'utf8');
+    fs.writeFileSync(ROOMS_FILE, JSON.stringify(roomsSnapshot()), 'utf8');
   } catch (e) {
-    console.log(`  !! não consegui salvar session.json: ${e.message}`);
+    console.log(`  !! não consegui salvar rooms.json: ${e.message}`);
   }
 }
 
-function dropSession() {
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  try { fs.unlinkSync(SESSION_FILE); } catch { /* já não existia */ }
-}
-
-// devolve um resumo do que foi restaurado, ou null
-function restoreSession(room) {
+// devolve quantas salas voltaram
+function restoreRooms() {
   let snap;
   try {
-    if (!fs.existsSync(SESSION_FILE)) return null;
-    snap = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+    if (!fs.existsSync(ROOMS_FILE)) return 0;
+    snap = JSON.parse(fs.readFileSync(ROOMS_FILE, 'utf8'));
   } catch (e) {
-    console.log(`  !! session.json ilegível, ignorando: ${e.message}`);
-    return null;
+    console.log(`  !! rooms.json ilegível, ignorando: ${e.message}`);
+    return 0;
   }
-  const idade = Date.now() - Date.parse(snap.savedAt || 0);
-  if (!(idade >= 0) || idade > SESSION_TTL_MS) return null;
-  if (snap.fingerprint !== quizFingerprint(room)) return null; // outro questionário
-  if (!Array.isArray(snap.players) || !snap.players.length) return null;
+  // formato antigo (session.json de sala única) não é convertido: tinha uma
+  // sala sem senha, e adivinhar uma para ela seria pior que recomeçar
+  if (!snap || snap.v !== SNAPSHOT_V || !Array.isArray(snap.rooms)) return 0;
 
-  for (const p of snap.players) {
-    room.players.set(p.id, {
-      id: p.id, name: p.name, ip: p.ip, color: p.color,
-      score: p.score || 0, streak: p.streak || 0, best: p.best || 0,
-      answers: new Map(Object.entries(p.answers || {})),
-      online: false, // só a conexão SSE afirma presença
-    });
+  const agora = Date.now();
+  let n = 0;
+  for (const s of snap.rooms) {
+    if (!CODE_RE.test(String(s.code || ''))) continue;
+    if (!(agora - (s.lastActivityAt || 0) < ROOM_TTL_MS)) continue; // já expirou parada
+    let prepared;
+    try {
+      prepared = prepareQuiz(s.quizRaw);
+    } catch {
+      continue; // questionário que não valida mais não vira sala
+    }
+    const room = makeRoom(prepared, s.code);
+    room.quiz.source = 'upload';
+    room.quiz.missing = false;
+    room.quiz.problems = [];
+    room.quizRaw = s.quizRaw;
+    room.createdAt = s.createdAt || agora;
+    room.lastActivityAt = s.lastActivityAt || agora;
+    if (s.passSalt && s.passHash) {
+      room.passSalt = Buffer.from(s.passSalt, 'hex');
+      room.passHash = Buffer.from(s.passHash, 'hex');
+    }
+    if (s.ipSalt) room.ipSalt = Buffer.from(s.ipSalt, 'hex');
+    for (const [t, rec] of Object.entries(s.tokens || {})) room.tokens.set(t, rec);
+
+    for (const p of s.players || []) {
+      room.players.set(p.id, {
+        id: p.id, name: p.name, ipHash: p.ipHash || '', color: p.color,
+        score: p.score || 0, streak: p.streak || 0, best: p.best || 0,
+        answers: new Map(Object.entries(p.answers || {})),
+        online: false, // só a conexão SSE afirma presença
+      });
+    }
+    room.index = Number.isInteger(s.index) ? s.index : -1;
+    // uma pergunta que estava aberta não pode ter o relógio retomado: volta para
+    // a leitura da mesma pergunta, e quem já respondeu mantém a resposta dada
+    room.phase = s.phase === PHASE.QUESTION ? PHASE.PROMPT : (s.phase || PHASE.LOBBY);
+    if (room.index < 0 || room.index >= room.quiz.questions.length) {
+      room.index = -1;
+      room.phase = PHASE.LOBBY;
+    }
+    rooms.set(room.code, room);
+    n++;
   }
-  room.index = Number.isInteger(snap.index) ? snap.index : -1;
-  // uma pergunta que estava aberta não pode ter o relógio retomado: volta para a
-  // leitura da mesma pergunta, e quem já respondeu continua com a resposta dada
-  room.phase = snap.phase === PHASE.QUESTION ? PHASE.PROMPT : (snap.phase || PHASE.LOBBY);
-  if (room.index < 0 || room.index >= room.quiz.questions.length) {
-    room.index = -1;
-    room.phase = PHASE.LOBBY;
-  }
-  return { players: room.players.size, index: room.index, phase: room.phase, minutos: Math.round(idade / 60000) };
+  return n;
 }
 
 // ------------------------------------------------------------------ SSE hub
@@ -505,7 +556,7 @@ function pushState(room) {
   } finally {
     room.memo = null;
   }
-  scheduleSessionSave(room);
+  scheduleRoomsSave();
 }
 
 // --------------------------------------------------------------------- views
@@ -780,7 +831,8 @@ function resetGame(room, hard) {
   if (hard) {
     removed.push(...[...room.players.values()].map((p) => p.name));
     room.players.clear();
-    dropSession();
+    // o snapshot acompanha: a sala esvaziada nao volta cheia no proximo boot
+    scheduleRoomsSave();
   } else {
     for (const p of [...room.players.values()]) {
       if (!p.online) { removed.push(p.name); room.players.delete(p.id); continue; }
@@ -839,7 +891,8 @@ function submitAnswer(room, playerId, body, ip) {
   if (room.phase !== PHASE.QUESTION) return { ok: false, error: 'respostas fechadas' };
   if (p.answers.has(q.id)) return { ok: false, error: 'você já respondeu' };
   // a resposta tem de vir do aparelho que entrou com esse nome
-  if (ip && p.ip && ip !== p.ip)
+  const ipHash = hashIp(room, ip);
+  if (ipHash && p.ipHash && ipHash !== p.ipHash)
     return { ok: false, error: 'entre de novo neste aparelho para responder' };
 
   const elapsed = Date.now() - room.questionStartedAt;
@@ -883,11 +936,12 @@ function join(room, name, ip) {
 
   // nome repetido só passa se vier do mesmo IP que o criou — aí é a mesma pessoa
   // voltando (trocou de aba, limpou o navegador, caiu a rede) e recupera a pontuação
+  const ipHash = hashIp(room, ip);
   const taken = [...room.players.values()].find((p) => p.name.toLowerCase() === name.toLowerCase());
   if (!taken && room.players.size >= MAX_PLAYERS_PER_ROOM)
     return { ok: false, error: 'a sala está lotada' };
   if (taken) {
-    if (taken.ip !== ip) return { ok: false, error: 'esse nome já está na sala' };
+    if (taken.ipHash !== ipHash) return { ok: false, error: 'esse nome já está na sala' };
     // mesmo IP não basta: se aquele jogador está conectado agora, ninguém assume
     // o lugar dele (numa rede com NAT o IP não identifica a pessoa)
     if (taken.online)
@@ -904,7 +958,7 @@ function join(room, name, ip) {
   const color = COLORS[room.players.size % COLORS.length];
   // online é afirmado pela conexão SSE, não pelo join: um join que nunca abriu
   // o stream (fechou o celular na hora) fica removível pelo "Zerar ranking"
-  room.players.set(id, { id, name, ip, score: 0, streak: 0, best: 0, answers: new Map(), online: false, color });
+  room.players.set(id, { id, name, ipHash, score: 0, streak: 0, best: 0, answers: new Map(), online: false, color });
   broadcast(room, 'joined', { name, color, count: room.players.size });
   pushState(room);
   return { ok: true, id, name, color };
@@ -985,18 +1039,24 @@ function resolveRoom(req, url, body) {
   const code = String(raw).toUpperCase();
   if (code) {
     if (!CODE_RE.test(code)) return null;
-    const room = rooms.get(code);
-    if (room) room.lastActivityAt = Date.now(); // o TTL conta da última atividade
-    return room || null;
+    return tocar(rooms.get(code));
   }
   // Sem código: só resolve quando não há ambiguidade possível. Cobre o QR já
   // impresso e as abas abertas de antes desta mudança.
-  if (rooms.size === 1) {
-    const room = rooms.values().next().value;
-    room.lastActivityAt = Date.now();
-    return room;
-  }
+  if (rooms.size === 1) return tocar(rooms.values().next().value);
   return null;
+}
+
+// O sweeper roda a cada 5 min, então uma sala pode passar do prazo antes de ele
+// acordar. Conferir aqui evita que ela siga atendendo nesse intervalo.
+function tocar(room) {
+  if (!room) return null;
+  if (Date.now() - room.lastActivityAt > ROOM_TTL_MS) {
+    destroyRoom(room, 'sem atividade há 24h');
+    return null;
+  }
+  room.lastActivityAt = Date.now(); // o TTL conta da última atividade
+  return room;
 }
 
 async function handle(req, res) {
@@ -1189,7 +1249,7 @@ function guard(kind) {
       process.exit(1);
     }
     console.log(`  !! ${kind} ignorado para manter a sala no ar: ${e.stack || e.message}`);
-    saveSessionNow(THE_ROOM);
+    saveRoomsNow();
   };
 }
 process.on('uncaughtException', guard('erro'));
@@ -1201,7 +1261,7 @@ setInterval(sweepRooms, 5 * 60 * 1000).unref();
 
 for (const sinal of ['SIGINT', 'SIGTERM']) {
   process.on(sinal, () => {
-    saveSessionNow(THE_ROOM);
+    saveRoomsNow();
     console.log('\n  sessão salva em session.json — subindo de novo, a sala volta como estava.');
     process.exit(0);
   });
@@ -1212,7 +1272,7 @@ server.listen(PORT, () => {
   const ips = lanAddresses();
   // no boot ninguém está sendo atendido ainda: a versão síncrona não atrapalha
   setPasswordSync(THE_ROOM, BOOT_PASSWORD);
-  const retomada = restoreSession(THE_ROOM);
+  const retomadas = restoreRooms();
   const quiz = THE_ROOM.quiz;
   console.log('');
   console.log(`  ${quiz.title}`);
@@ -1231,11 +1291,14 @@ server.listen(PORT, () => {
   } else {
     console.log(`  sala: ${THE_ROOM.code}   ·   ${quiz.questions.length} perguntas   ·   ${quiz.blocks.length} bloco(s)   ·   ${quiz.source}`);
   }
-  if (retomada) {
+  if (retomadas) {
     console.log('');
-    console.log(`  sessão retomada (salva há ${retomada.minutos} min): ${retomada.players} participante(s), `
-      + `${retomada.index >= 0 ? `pergunta ${retomada.index + 1}` : 'lobby'}, fase ${retomada.phase}`);
-    console.log('  os participantes reconectam sozinhos · "Zerar ranking" limpa tudo');
+    console.log(`  ${retomadas} sala(s) retomada(s) do rooms.json:`);
+    for (const r of rooms.values()) {
+      if (r === THE_ROOM) continue;
+      console.log(`    ${r.code} · ${r.quiz.title} · ${r.players.size} participante(s) · fase ${r.phase}`);
+    }
+    console.log('  os participantes reconectam sozinhos · a senha continua a mesma');
   }
   console.log('');
   if (process.env.HOST_PASSWORD) {
