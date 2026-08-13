@@ -526,7 +526,6 @@ function renderLobby() {
               <span style="flex:1"></span>
               <button class="btn" id="bUpload">Carregar JSON…</button>
               <button class="btn" id="bTemplate">Baixar modelo</button>
-              ${qi.custom && qi.hasDefault ? '<button class="btn" id="bDefault">Restaurar padrão</button>' : ''}
             </div>
             <div class="blocks">
               ${qi.blocks.map((b) => `<span class="bk">${esc(b.title || 'sem bloco')}<b>${b.count}</b></span>`).join('')}
@@ -609,13 +608,6 @@ function wireQuizPanel() {
     a.remove();
   };
   $('#quizFile').onchange = (e) => load(e.target.files[0]);
-  const bDefault = $('#bDefault');
-  if (bDefault) bDefault.onclick = async () => {
-    if (!confirm('Voltar para o questions.json do projeto? A pontuação é zerada.')) return;
-    const r = await fetch('/api/host/quiz/default', { method: 'POST' }).then((x) => x.json());
-    if (!r.ok) say(r.error, 'err');
-  };
-
   ['dragenter', 'dragover'].forEach((ev) =>
     panel.addEventListener(ev, (e) => { e.preventDefault(); panel.classList.add('drop'); }));
   ['dragleave', 'drop'].forEach((ev) =>

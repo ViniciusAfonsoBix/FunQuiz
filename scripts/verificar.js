@@ -299,6 +299,20 @@ async function multisala() {
     ok('T3 · stream de host com token da outra sala dá 401', cruzado.status === 401, `status=${cruzado.status}`);
     ok('T3 · a senha de A não abre B', (await req(P, 'POST', '/api/host/login', { room: cb, password: 'senha-alfa-1' })).status === 401, 'abriu');
 
+    // "Zerar ranking" não pode trocar o questionário: quando existia uma sala só,
+    // o reset recarregava o quiz do disco, e numa sala criada por upload isso
+    // substituiria o questionário dela pelo questions.json do projeto.
+    await req(P, 'POST', '/api/host/reset', { hard: false }, { 'X-Room': ca, 'X-Host-Token': ta });
+    await espera(300);
+    ok('reset preserva o questionário da sala', hostA.state.title === 'SALA-ALFA', `virou ${hostA.state.title}`);
+    ok('reset zera o placar', hostA.state.leaderboard.every((r) => r.score === 0), JSON.stringify(hostA.state.leaderboard));
+
+    // e o mesmo vale para trocar o questionário de uma sala: não afeta a outra
+    await req(P, 'POST', '/api/host/quiz', { quiz: QUIZ('SALA-ALFA-V2', 1) }, { 'X-Room': ca, 'X-Host-Token': ta });
+    await espera(300);
+    ok('trocar o questionário afeta só a sala pedida', hostA.state.title === 'SALA-ALFA-V2' && hostB.state.title === 'SALA-BETA',
+      `${hostA.state.title}/${hostB.state.title}`);
+
     // T5 — o que não pode virar sala
     ok('T5 · senha curta recusada', (await req(P, 'POST', '/api/rooms', { quiz: QUIZ('X', 0), password: 'curta' })).status === 400, 'aceitou');
     ok('T5 · quiz vazio recusado', (await req(P, 'POST', '/api/rooms', { quiz: { questions: [] }, password: 'senha-boa-123' })).status === 400, 'aceitou');

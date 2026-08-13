@@ -31,13 +31,12 @@ const MIN_PASSWORD = 8;
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DEFAULT_FILE = path.join(ROOT, 'questions.json');
-const UPLOAD_FILE = path.join(ROOT, 'uploaded-questions.json');
 
-// QUESTIONS no ambiente manda; senão, um JSON enviado pela tela do apresentador
-// tem precedência sobre o questions.json do repo (e some com "Restaurar padrão")
+// Questionário da sala criada no boot. As salas criadas por upload guardam o
+// próprio questionário dentro de si — não existe mais arquivo global de upload,
+// que era justamente onde duas salas se atropelavam.
 function quizFile() {
-  if (process.env.QUESTIONS) return process.env.QUESTIONS;
-  return fs.existsSync(UPLOAD_FILE) ? UPLOAD_FILE : DEFAULT_FILE;
+  return process.env.QUESTIONS || DEFAULT_FILE;
 }
 
 // ---------------------------------------------------------------- quiz loading
@@ -666,10 +665,8 @@ function hostView(room) {
     quizInfo: {
       source: room.quiz.source, count: room.quiz.questions.length, ranking: room.quiz.ranking,
       blocks: room.quiz.blocks.map((b) => ({ title: b.title, count: b.count })),
-      custom: quizFile() === UPLOAD_FILE,
       missing: !!room.quiz.missing,          // nada carregado: a tela pede o upload
       problems: room.quiz.problems || [],    // ou o arquivo existe mas está inválido
-      hasDefault: fs.existsSync(DEFAULT_FILE),
       locked: !!process.env.QUESTIONS,       // servidor amarrado a um arquivo por env
     },
     leaderboard: leaderboard(room),
@@ -839,16 +836,23 @@ function resetGame(room, hard) {
       p.score = 0; p.streak = 0; p.best = 0; p.answers.clear();
     }
   }
-  room.quiz = loadQuiz();
+  // NÃO recarrega o questionário: ele pertence à sala. Recarregar de disco era
+  // o certo quando existia uma sala só e um arquivo só; numa sala criada por
+  // upload isso trocaria o questionário dela pelo questions.json do projeto.
   pushState(room);
   return { ok: true, removed, kept: room.players.size };
 }
 
 // ---------------------------------------------------------- troca do questionário
 
+// Troca o questionário DESTA sala. Não toca em arquivo nenhum: o questionário
+// vive na sala e vai para o disco junto com ela, no rooms.json. Um arquivo
+// global de upload voltaria a ser o ponto onde duas salas se atropelam.
 function installQuiz(room, raw) {
   if (process.env.QUESTIONS)
     return { ok: false, error: 'o servidor foi iniciado com QUESTIONS=… — troque pelo arquivo ou reinicie sem a variável' };
+  if (Array.isArray(raw && raw.questions) && raw.questions.length > MAX_QUESTIONS)
+    return { ok: false, error: `no máximo ${MAX_QUESTIONS} perguntas por sala` };
   let prepared;
   try {
     prepared = prepareQuiz(raw);
@@ -856,28 +860,14 @@ function installQuiz(room, raw) {
     if (e instanceof QuizError) return { ok: false, error: 'JSON inválido', problems: e.problems };
     return { ok: false, error: String(e.message || e) };
   }
-  // grava para sobreviver a um restart no meio do workshop — mas pasta somente
-  // leitura, disco cheio ou antivírus não podem derrubar o servidor
-  try {
-    fs.writeFileSync(UPLOAD_FILE, JSON.stringify(raw, null, 2), 'utf8');
-  } catch (e) {
-    return { ok: false, error: `não consegui gravar ${path.basename(UPLOAD_FILE)}: ${e.message}` };
-  }
   room.quiz = prepared;
-  room.quiz.source = path.basename(UPLOAD_FILE);
+  room.quiz.source = 'upload';
+  room.quiz.missing = false;
+  room.quiz.problems = [];
+  room.quizRaw = raw;
   resetGame(room, false);
-  console.log(`  questionário trocado: ${room.quiz.title} · ${room.quiz.questions.length} perguntas · ${room.quiz.blocks.length} bloco(s)`);
+  console.log(`  questionário trocado na sala ${room.code}: ${room.quiz.title} · ${room.quiz.questions.length} perguntas`);
   return { ok: true, title: room.quiz.title, count: room.quiz.questions.length, blocks: room.quiz.blocks.length };
-}
-
-function restoreDefaultQuiz(room) {
-  if (process.env.QUESTIONS) return { ok: false, error: 'servidor iniciado com QUESTIONS=…' };
-  if (!fs.existsSync(DEFAULT_FILE))
-    return { ok: false, error: 'não existe questions.json no projeto para voltar' };
-  try { fs.unlinkSync(UPLOAD_FILE); } catch { /* já era o padrão */ }
-  room.quiz = loadQuiz();
-  resetGame(room, false);
-  return { ok: true, title: room.quiz.title, count: room.quiz.questions.length };
 }
 
 // ------------------------------------------------------------------ handlers
@@ -1167,10 +1157,6 @@ async function handle(req, res) {
         return sendJson(res, 200, { ok: true });
       case '/api/host/quiz': {
         const r = installQuiz(room, body.quiz);
-        return sendJson(res, r.ok ? 200 : 400, r);
-      }
-      case '/api/host/quiz/default': {
-        const r = restoreDefaultQuiz(room);
         return sendJson(res, r.ok ? 200 : 400, r);
       }
       case '/api/join': return sendJson(res, 200, join(room, body.name, clientIp(req)));
