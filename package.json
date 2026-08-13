@@ -4,7 +4,7 @@
   "description": "Servidor + cliente, **zero dependências** (só Node ≥ 18). A pergunta e as alternativas aparecem **só na tela do apresentador**; no celular o participante vê apenas as formas/letras coloridas e toca na sua resposta.",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node scripts/verificar.js",
     "start": "node server.js"
   },
   "repository": {
@@ -15,6 +15,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "bugs": {
     "url": "https://github.com/ViniciusAfonsoBix/FunQuiz/issues"
   },
