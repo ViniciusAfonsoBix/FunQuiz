@@ -337,6 +337,12 @@
   }
   .dots i.in { background: var(--dot); transform: scale(1.25); animation: popIn 0.4s var(--ease) both; }
 
+  /* Antes de haver sala conectada (criar sala, senha, sala inexistente) não há
+     o que contar nem o que avançar: a barra de cima e os controles saem de cena
+     em vez de oferecer botões que só devolveriam 401. */
+  body.sem-sala .top,
+  body.sem-sala .ctl { display: none; }
+
   /* -------------------------------------------------------------------- misc */
   .confetti { position: fixed; inset: 0; pointer-events: none; z-index: 30; overflow: hidden; top: -20px; }
   .confetti i {
@@ -900,6 +906,7 @@ let TOKEN = '';
 
 let es = null, banner = null;
 function connect() {
+  document.body.classList.remove('sem-sala');
   es = new EventSource('/events?role=host'
     + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '')
     + (TOKEN ? '&t=' + encodeURIComponent(TOKEN) : ''));
@@ -945,6 +952,7 @@ function connect() {
 }
 
 function renderLogin(err) {
+  document.body.classList.add('sem-sala');
   setBody(`
     <div class="lobby">
       <div>
@@ -991,6 +999,7 @@ function renderLogin(err) {
 // Criar sala: sobe o JSON e escolhe a senha. É o que /host mostra quando não há
 // código na URL.
 function renderCreate(msg) {
+  document.body.classList.add('sem-sala');
   setBody(`
     <div class="lobby">
       <div>
@@ -1075,6 +1084,7 @@ function renderCreate(msg) {
   const info = await fetch('/api/room?room=' + encodeURIComponent(ROOM))
     .then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!info || !info.room) {
+    document.body.classList.add('sem-sala');
     setBody(`
       <div class="lobby"><div>
         <h1>Sala não encontrada</h1>
