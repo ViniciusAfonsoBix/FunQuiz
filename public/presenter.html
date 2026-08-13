@@ -343,6 +343,13 @@
   body.sem-sala .top,
   body.sem-sala .ctl { display: none; }
 
+  #langBox { position: absolute; top: 10px; right: 14px; z-index: 20; }
+  select.lang {
+    background: rgba(0, 0, 0, 0.35); color: var(--ink-dim); border: 1px solid var(--panel-line);
+    border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  select.lang option { background: #241640; color: #fff; }
+
   /* -------------------------------------------------------------------- misc */
   .confetti { position: fixed; inset: 0; pointer-events: none; z-index: 30; overflow: hidden; top: -20px; }
   .confetti i {
@@ -404,13 +411,16 @@
 </head>
 <body>
 <div class="stage">
+  <!-- fora da .top de propósito: ela some nas telas de criar sala e de senha,
+       que são justamente onde alguém escolhe o idioma antes de começar -->
+  <span id="langBox"></span>
   <div class="top">
-    <span class="pill accent">SALA <b id="room">—</b></span>
+    <span class="pill accent"><span id="roomLabel">SALA</span> <b id="room">—</b></span>
     <span class="pill" id="pos">—</span>
     <span class="block-tag" id="block"></span>
     <span class="grow"></span>
     <span class="pill" id="pcount">0 na sala</span>
-    <span class="pill nolimit" id="nolimit" hidden>∞ sem limite de tempo</span>
+    <span class="pill nolimit" id="nolimit" hidden></span>
     <div class="dial" id="dial" hidden>
       <svg width="96" height="96" viewBox="0 0 96 96">
         <circle class="track" cx="48" cy="48" r="41"></circle>
@@ -423,11 +433,11 @@
   <div class="body" id="body"></div>
 
   <div class="ctl">
-    <button class="btn primary" id="bNext">Avançar <kbd>Space</kbd></button>
-    <button class="btn" id="bPrev">Voltar <kbd>←</kbd></button>
-    <button class="btn" id="bScores">Ranking <kbd>L</kbd></button>
-    <button class="btn" id="bLobby">Lobby</button>
-    <button class="btn" id="bReset">Zerar ranking</button>
+    <button class="btn primary" id="bNext"></button>
+    <button class="btn" id="bPrev"></button>
+    <button class="btn" id="bScores"></button>
+    <button class="btn" id="bLobby"></button>
+    <button class="btn" id="bReset"></button>
     <div class="counter">
       <span id="answered" class="mono">0 / 0 responderam</span>
       <div class="dots" id="dots"></div>
@@ -438,7 +448,9 @@
 <div class="toast" id="toast"></div>
 
 <script src="/qr.js"></script>
+<script src="/i18n.js"></script>
 <script>
+const t = (k, v) => I18N.t(k, v);
 const $ = (s) => document.querySelector(s);
 const body = $('#body');
 
@@ -507,7 +519,7 @@ function renderLobby() {
   const url = (S && S.joinUrl) || '';
   const qr = url
     ? `<img src="/qr.svg?room=${encodeURIComponent(S.room)}" alt="QR code para entrar em ${url}"/>`
-    : '<div class="label" style="padding:18px 10px">defina <code>PUBLIC_URL</code><br>para o QR aparecer</div>';
+    : `<div class="label" style="padding:18px 10px">${t('host.lobby.sem_public_url')}</div>`;
   const qi = S.quizInfo;
   setBody(`
     <div class="lobby">
@@ -517,36 +529,34 @@ function renderLobby() {
         <div class="quiz${qi.missing ? ' empty' : ''}" id="quizPanel">
           ${qi.missing ? `
             <div class="ask">
-              <div class="ask-t">Nenhum questionário carregado</div>
-              <p class="ask-p">${qi.locked
-                ? `O servidor foi iniciado com <code>QUESTIONS</code> apontando para um arquivo que não pôde ser lido. Corrija o caminho e reinicie — por segurança o upload fica desligado nesse modo.`
-                : `Carregue um <b>.json</b> com as perguntas para começar. Se ainda não tem um, baixe o modelo, edite e traga de volta.`}</p>
-              ${qi.problems.length ? `<div class="msg err" style="margin:-6px 0 16px">o arquivo encontrado não serviu:<ul>${qi.problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}
+              <div class="ask-t">${esc(t('host.quiz.nenhum'))}</div>
+              <p class="ask-p">${qi.locked ? t('host.quiz.travado') : t('host.quiz.peca')}</p>
+              ${qi.problems.length ? `<div class="msg err" style="margin:-6px 0 16px">${esc(t('host.quiz.nao_serviu'))}<ul>${qi.problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}
               <div class="line">
-                ${qi.locked ? '' : '<button class="btn primary" id="bUpload">Carregar JSON…</button>'}
-                <button class="btn" id="bTemplate">Baixar modelo</button>
+                ${qi.locked ? '' : `<button class="btn primary" id="bUpload">${esc(t('host.quiz.carregar'))}</button>`}
+                <button class="btn" id="bTemplate">${esc(t('host.quiz.modelo'))}</button>
               </div>
             </div>` : `
             <div class="line">
-              <span class="who2"><b>${qi.count}</b> perguntas em <b>${qi.blocks.length}</b> bloco(s) · <b>${esc(qi.source)}</b></span>
+              <span class="who2">${t('host.lobby.resumo', { n: qi.count, b: qi.blocks.length, fonte: esc(qi.source) })}</span>
               <span style="flex:1"></span>
-              <button class="btn" id="bUpload">Carregar JSON…</button>
-              <button class="btn" id="bTemplate">Baixar modelo</button>
+              <button class="btn" id="bUpload">${esc(t('host.quiz.carregar'))}</button>
+              <button class="btn" id="bTemplate">${esc(t('host.quiz.modelo'))}</button>
             </div>
             <div class="blocks">
-              ${qi.blocks.map((b) => `<span class="bk">${esc(b.title || 'sem bloco')}<b>${b.count}</b></span>`).join('')}
+              ${qi.blocks.map((b) => `<span class="bk">${esc(b.title || t('host.lobby.sem_bloco'))}<b>${b.count}</b></span>`).join('')}
             </div>`}
           <div class="msg" id="quizMsg"></div>
-          ${qi.locked ? '' : `<div class="hint">arraste um .json aqui${qi.missing ? '' : ' para trocar o questionário · o ranking aparece no fim de cada bloco'}</div>`}
+          ${qi.locked ? '' : `<div class="hint">${esc(t('host.lobby.arraste'))}${qi.missing ? '' : esc(t('host.lobby.arraste_troca'))}</div>`}
           <input type="file" id="quizFile" accept=".json,application/json" hidden>
         </div>
         <div class="who-list" id="chips"></div>
       </div>
       <div class="join">
         <div class="qr">${qr}</div>
-        <div class="label">aponte a câmera ou digite</div>
+        <div class="label">${esc(t('host.lobby.aponte'))}</div>
         <div class="url">${esc((url || location.origin + '/play').replace(/^https?:\/\//, ''))}</div>
-        <div class="label">sala</div>
+        <div class="label">${esc(t('host.lobby.sala'))}</div>
         <div class="code mono">${esc(S.room)}</div>
       </div>
     </div>`);
@@ -573,32 +583,31 @@ function wireQuizPanel() {
 
   const load = async (file) => {
     if (!file) return;
-    if (!/\.json$/i.test(file.name)) return say(`"${file.name}" não é um .json`, 'err');
+    if (!/\.json$/i.test(file.name)) return say(t('host.quiz.nao_json', { arquivo: file.name }), 'err');
     // trocar o questionário zera a sala — confirma sempre que houver algo a perder
     const pontuados = S.leaderboard.filter((r) => r.score > 0).length;
     const emJogo = S.phase !== 'lobby';
     if ((emJogo || pontuados) && !confirm(
       (emJogo
-        ? `A sala está no ar (${S.index >= 0 ? `pergunta ${S.index + 1} de ${S.total}` : S.phase}). `
-        : `${pontuados} participante(s) já pontuaram. `)
-      + '\n\nCarregar outro questionário zera a pontuação de todos, remove quem está '
-      + 'desconectado e volta para o lobby.\n\nContinuar?')) return;
+        ? t('host.quiz.confirma_jogo', { onde: S.index >= 0 ? t('host.quiz.pergunta_de', { i: S.index + 1, total: S.total }) : S.phase })
+        : t('host.quiz.confirma_pontos', { n: pontuados }))
+      + t('host.quiz.confirma_resto'))) return;
     let quiz;
     try {
       quiz = JSON.parse(await file.text());
     } catch (e) {
-      return say('esse arquivo não é um JSON válido: ' + e.message, 'err');
+      return say(t('host.quiz.json_invalido', { motivo: e.message }), 'err');
     }
-    say('enviando ' + file.name + '…');
+    say(t('host.quiz.enviando', { arquivo: file.name }));
     const r = await fetch('/api/host/quiz', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ quiz }),
-    }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+    }).then((x) => x.json()).catch(() => ({ ok: false, code: 'sem_conexao' }));
     if (r.ok) {
-      say(`"${r.title}" carregado — ${r.count} perguntas em ${r.blocks} bloco(s). Pontuação zerada.`, 'ok');
-      toast('questionário trocado');
+      say(t('host.quiz.trocado', { titulo: r.title, n: r.count, b: r.blocks }), 'ok');
+      toast(t('host.quiz.trocado_toast'));
     } else {
-      say(r.error || 'não deu', 'err', r.problems);
+      say(I18N.erro(r), 'err', r.problems);
     }
   };
 
@@ -626,7 +635,7 @@ function paintChips() {
   if (!el) return;
   el.innerHTML = S.players.length
     ? S.players.map((p, i) => `<span class="chip ${p.online ? '' : 'off'}" style="--dot:${p.color};animation-delay:${Math.min(i * 40, 600)}ms"><i></i>${esc(p.name)}</span>`).join('')
-    : `<span style="color:var(--ink-dim)">Esperando participantes…</span>`;
+    : `<span style="color:var(--ink-dim)">${esc(t('host.lobby.esperando'))}</span>`;
 }
 
 function renderBlockIntro() {
@@ -685,8 +694,8 @@ function renderQuestion(mode) {
     <div class="${revealed ? 'revealed' : ''}" style="display:flex;flex-direction:column;flex:1;min-height:0">
       <div class="qtext">${esc(q.text)}</div>
       <div class="opts${settled ? ' settled' : ''}">${opts}</div>
-      ${prompt ? `<div class="cue">Leia a pergunta em voz alta · <b>Space</b> mostra as alternativas ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
-      ${revealed ? `<div class="why"><b>Resposta: ${LETTERS[S.reveal.answer]}</b> — ${esc(S.reveal.why)}</div>` : ''}
+      ${prompt ? `<div class="cue">${t('host.cue.alternativas', { tempo: q.untimed ? t('host.cue.sem_tempo') : t('host.cue.com_tempo', { n: q.seconds }) })}</div>` : ''}
+      ${revealed ? `<div class="why"><b>${esc(t('host.resposta', { letra: LETTERS[S.reveal.answer] }))}</b> — ${esc(S.reveal.why)}</div>` : ''}
     </div>`);
 }
 
@@ -706,14 +715,14 @@ function renderOpen(mode) {
 
   const vazio = prompt
     ? '<span class="cloud-empty" style="color:var(--ink-faint);margin:auto">…</span>'
-    : '<span class="cloud-empty" style="color:var(--ink-dim);margin:auto">as respostas aparecem aqui…</span>';
+    : `<span class="cloud-empty" style="color:var(--ink-dim);margin:auto">${esc(t('host.respostas_aqui'))}</span>`;
 
   setBody(`
     <div style="display:flex;flex-direction:column;flex:1;min-height:0">
       <div class="qtext">${esc(q.text)}</div>
-      <div class="qmeta" id="openMeta">discussão aberta · sem resposta certa${prompt ? '' : ` · ${S.tally.total} resposta(s)`}</div>
+      <div class="qmeta" id="openMeta">${esc(t('host.aberta'))}${prompt ? '' : esc(t('host.n_respostas', { n: S.tally.total }))}</div>
       <div class="cloud" id="cloud">${cards || vazio}</div>
-      ${prompt ? `<div class="cue">leia a pergunta em voz alta · <b>Space</b> abre o campo de resposta ${q.untimed ? '(sem limite de tempo — você fecha na mão)' : `e começa os ${q.seconds}s`}</div>` : ''}
+      ${prompt ? `<div class="cue">${t('host.cue.campo', { tempo: q.untimed ? t('host.cue.sem_tempo') : t('host.cue.com_tempo', { n: q.seconds }) })}</div>` : ''}
       ${revealed ? `<div class="why">${esc(S.reveal.why)}</div>` : ''}
     </div>`);
 }
@@ -724,7 +733,7 @@ function paintCloud() {
   const cloud = $('#cloud');
   if (!cloud) return;
   const meta = $('#openMeta');
-  if (meta) meta.textContent = `discussão aberta · sem resposta certa · ${S.tally.total} resposta(s)`;
+  if (meta) meta.textContent = t('host.aberta') + t('host.n_respostas', { n: S.tally.total });
   for (const a of S.tally.texts) {
     const key = a.name + ' ' + a.text;
     if (cloudKeys.has(key)) continue;
@@ -743,18 +752,18 @@ function renderBoard() {
   const rows = S.leaderboard.slice(0, 10);
   const b = S.block;
   const heading = b && b.last && b.title
-    ? `Ranking — fim de ${b.title}`
-    : b && b.title ? `Ranking — ${b.title}` : 'Ranking';
+    ? t('host.ranking_fim_de', { titulo: b.title })
+    : b && b.title ? t('host.ranking_de', { titulo: b.title }) : t('host.ranking');
   setBody(`
     <div class="board">
       <div class="qtext" style="font-size:clamp(24px,2.6vw,40px);margin-bottom:8px">${esc(heading)}</div>
-      ${b && b.total > 1 ? `<div class="qmeta" style="margin:-4px 0 10px">${b.index + 1} de ${b.total} blocos concluídos</div>` : ''}
+      ${b && b.total > 1 ? `<div class="qmeta" style="margin:-4px 0 10px">${esc(t('host.blocos_concluidos', { i: b.index + 1, total: b.total }))}</div>` : ''}
       ${rows.length ? rows.map((r, i) => `
         <div class="row ${i < 3 ? 'top' + (i + 1) : ''}" style="animation:riseIn .5s var(--ease) ${i * 70}ms both">
           <span class="rk mono">#${r.rank}</span>
           <span>${esc(r.name)}${r.streak > 1 ? `<span class="streak">🔥 ${r.streak} seguidas</span>` : ''}</span>
           <span class="pts mono" data-to="${r.score}">0</span>
-        </div>`).join('') : '<div class="row"><span></span><span style="color:var(--ink-dim)">ninguém pontuou ainda</span><span></span></div>'}
+        </div>`).join('') : `<div class="row"><span></span><span style="color:var(--ink-dim)">${esc(t('host.ninguem'))}</span><span></span></div>`}
     </div>`);
   countUp();
 }
@@ -766,7 +775,7 @@ function renderEnd() {
   const order = [1, 0, 2];
   setBody(`
     <div style="display:flex;flex-direction:column;flex:1;min-height:0">
-      <div class="qtext rise" style="font-size:clamp(28px,3vw,48px)">Fim — obrigado! 🎉</div>
+      <div class="qtext rise" style="font-size:clamp(28px,3vw,48px)">${esc(t('host.ranking_final'))}</div>
       <div class="podium">
         ${order.filter((i) => top[i]).map((i) => `
           <div class="pod">
@@ -825,22 +834,26 @@ function toast(msg) {
 // -------------------------------------------------------------------- render
 function render() {
   $('#room').textContent = S.room;
-  $('#pcount').textContent = S.players.length + ' na sala';
+  $('#pcount').textContent = t('host.na_sala', { n: S.players.length });
   $('#block').textContent = S.block
-    ? `${S.block.title || 'sem bloco'} · ${S.block.pos}/${S.block.size}` +
+    ? `${S.block.title || t('host.lobby.sem_bloco')} · ${S.block.pos}/${S.block.size}` +
       (S.block.total > 1 ? ` · bloco ${S.block.index + 1} de ${S.block.total}` : '')
     : '';
-  $('#pos').textContent = S.index >= 0 ? `${S.index + 1} / ${S.total}` : 'lobby';
+  $('#pos').textContent = S.index >= 0 ? `${S.index + 1} / ${S.total}` : t('host.btn.lobby').toLowerCase();
 
   const lastQ = S.index + 1 >= S.total;
   const label = {
-    lobby: 'Começar', blockintro: 'Primeira pergunta do bloco',
-    prompt: 'Mostrar alternativas ⏱', question: 'Encerrar e revelar',
+    lobby: t('host.btn.comecar'), blockintro: t('host.btn.primeira'),
+    prompt: t('host.btn.alternativas'), question: t('host.btn.revelar'),
     // depois do reveal o ranking só entra na virada de bloco
-    reveal: lastQ ? 'Encerrar' : S.block && S.block.rankingAfter ? 'Ranking do bloco' : 'Próxima pergunta',
-    scores: 'Próxima pergunta', end: 'Fim',
-  }[S.phase] || 'Avançar';
-  $('#bNext').innerHTML = `${label} <kbd>Space</kbd>`;
+    reveal: lastQ ? t('host.btn.encerrar') : S.block && S.block.rankingAfter ? t('host.btn.ranking_bloco') : t('host.btn.proxima'),
+    scores: t('host.btn.proxima'), end: t('host.btn.fim'),
+  }[S.phase] || t('host.btn.avancar');
+  $('#bNext').innerHTML = `${esc(label)} <kbd>Space</kbd>`;
+  $('#bPrev').innerHTML = `${esc(t('host.btn.voltar'))} <kbd>←</kbd>`;
+  $('#bScores').innerHTML = `${esc(t('host.btn.ranking'))} <kbd>L</kbd>`;
+  $('#bLobby').textContent = t('host.btn.lobby');
+  $('#bReset').textContent = t('host.btn.zerar');
   $('#bNext').disabled = S.phase === 'end' || !S.total; // sem perguntas não há o que começar
 
   // As telas de ranking têm barra própria: só voltar e zerar. Avançar sai junto
@@ -858,8 +871,8 @@ function render() {
   // denominador = todos na sala; quem caiu aparece à parte, senão o contador
   // passa de 100% quando alguém responde e depois perde a conexão
   const offline = S.players.filter((p) => !p.online).length;
-  $('#answered').textContent = `${S.answered} / ${S.players.length} responderam`
-    + (offline ? ` · ${offline} desconectado(s)` : '');
+  $('#answered').textContent = t('host.responderam', { a: S.answered, b: S.players.length })
+    + (offline ? t('host.desconectados', { n: offline }) : '');
   $('#dots').innerHTML = S.players.map((p) =>
     `<i class="${p.answered ? 'in' : ''}" style="--dot:${p.color}"></i>`).join('');
 
@@ -885,6 +898,7 @@ function render() {
   else if (liveCloud) paintCloud(); // acrescenta o card novo sem refazer a tela
 
   prevPhase = S.phase; prevQ = S.index;
+  $('#nolimit').textContent = '∞ ' + t('host.sem_limite');
   $('#nolimit').hidden = !(S.phase === 'question' && S.question && S.question.untimed);
   if (S.phase !== 'question') { $('#dial').hidden = true; stopDial(); }
 }
@@ -913,6 +927,7 @@ let TOKEN = '';
 
 let es = null, banner = null;
 function connect() {
+  telaPre = null;   // daqui em diante quem manda no redesenho é o estado da sala
   document.body.classList.remove('sem-sala');
   es = new EventSource('/events?role=host'
     + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '')
@@ -936,8 +951,8 @@ function connect() {
     countdown = { seconds: d.seconds, startedAt: Date.now() - (d.seconds - d.secondsLeft) * 1000, q: S ? S.index : 0 };
     tickDial();
   });
-  es.addEventListener('joined', (e) => toast('entrou: ' + JSON.parse(e.data).name));
-  es.addEventListener('allin', () => toast('todos responderam ✓'));
+  es.addEventListener('joined', (e) => toast(t('host.entrou', { nome: JSON.parse(e.data).name })));
+  es.addEventListener('allin', () => toast(t('host.todos')));
   es.onopen = () => { if (banner) { banner.remove(); banner = null; } };
   es.onerror = () => {
     // o servidor recusa e fecha quando o token não vale; a sala já foi
@@ -947,33 +962,37 @@ function connect() {
       if (banner) { banner.remove(); banner = null; }
       localStorage.removeItem(tokenKey());
       TOKEN = '';
-      return renderLogin('sua sessão expirou — digite a senha de novo');
+      return renderLogin(t('host.login.expirou'));
     }
     if (!banner) {
       banner = document.createElement('div');
       banner.className = 'offline';
-      banner.textContent = 'reconectando ao servidor…';
+      banner.textContent = t('host.reconectando');
       document.body.appendChild(banner);
     }
   };
 }
 
+// Guarda qual tela pré-sala está no ar para poder redesenhá-la na troca de
+// idioma. Nessas telas não existe estado de sala, então render() não serve.
+let telaPre = null;
+
 function renderLogin(err) {
+  telaPre = () => renderLogin(err);
   document.body.classList.add('sem-sala');
   setBody(`
     <div class="lobby">
       <div>
-        <h1>Controlar a apresentação</h1>
-        <p class="sub">sala <b class="mono">${esc(ROOM)}</b></p>
+        <h1>${esc(t('host.login.titulo'))}</h1>
+        <p class="sub">${t('host.login.sala', { sala: esc(ROOM) })}</p>
         <div class="quiz empty">
           <div class="ask">
-            <div class="ask-t">Senha do apresentador</div>
-            <p class="ask-p">A senha protege o controle da apresentação: sem ela,
-              qualquer pessoa com o código da sala poderia revelar respostas ou pular perguntas.</p>
+            <div class="ask-t">${esc(t('host.login.senha'))}</div>
+            <p class="ask-p">${esc(t('host.login.explica'))}</p>
             <div class="line">
-              <input type="password" id="pw" placeholder="senha" autocomplete="current-password"
+              <input type="password" id="pw" placeholder="${esc(t('host.login.ph'))}" autocomplete="current-password"
                      style="flex:1;min-width:220px;padding:12px 14px;border-radius:10px;border:1px solid #6b5b95;background:#241640;color:#fff;font:inherit">
-              <button class="btn primary" id="bLogin">Entrar</button>
+              <button class="btn primary" id="bLogin">${esc(t('host.login.botao'))}</button>
             </div>
             <div class="msg${err ? ' err' : ''}" id="loginMsg">${err ? esc(err) : ''}</div>
           </div>
@@ -989,14 +1008,14 @@ function renderLogin(err) {
     const r = await fetch('/api/host/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ room: ROOM, password }),
-    }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+    }).then((x) => x.json()).catch(() => ({ ok: false, code: 'sem_conexao' }));
     if (r.ok) {
       ROOM = r.room;
       TOKEN = r.token;
       localStorage.setItem(tokenKey(), TOKEN);
       connect();
     } else {
-      renderLogin(r.error || 'senha incorreta');
+      renderLogin(I18N.erro(r));
     }
   };
   document.querySelector('#bLogin').onclick = submit;
@@ -1006,33 +1025,31 @@ function renderLogin(err) {
 // Criar sala: sobe o JSON e escolhe a senha. É o que /host mostra quando não há
 // código na URL.
 function renderCreate(msg) {
+  telaPre = () => renderCreate(msg);
   document.body.classList.add('sem-sala');
   setBody(`
     <div class="lobby">
       <div>
-        <h1>Nova sala</h1>
-        <p class="sub">carregue as perguntas e escolha uma senha</p>
+        <h1>${esc(t('host.criar.titulo'))}</h1>
+        <p class="sub">${esc(t('host.criar.sub'))}</p>
         <div class="quiz empty">
           <div class="ask">
-            <div class="ask-t">Perguntas</div>
-            <p class="ask-p">Um <b>.json</b> com as perguntas. Se ainda não tem, baixe o modelo, edite e traga de volta.</p>
+            <div class="ask-t">${esc(t('host.criar.perguntas'))}</div>
+            <p class="ask-p">${t('host.criar.perguntas_sub')}</p>
             <div class="line">
-              <button class="btn primary" id="bPick">Escolher JSON…</button>
-              <button class="btn" id="bTpl">Baixar modelo</button>
-              <span class="who2" id="fileName">nenhum arquivo</span>
+              <button class="btn primary" id="bPick">${esc(t('host.criar.escolher'))}</button>
+              <button class="btn" id="bTpl">${esc(t('host.quiz.modelo'))}</button>
+              <span class="who2" id="fileName">${esc(t('host.criar.nenhum_arquivo'))}</span>
             </div>
-            <div class="ask-t" style="margin-top:22px">Senha do apresentador</div>
-            <p class="ask-p">Protege o controle da apresentação. Anote: <b>não há como recuperá-la</b> —
-              sem ela, e sem este navegador, a sala não volta.</p>
+            <div class="ask-t" style="margin-top:22px">${esc(t('host.criar.senha'))}</div>
+            <p class="ask-p">${t('host.criar.senha_sub')}</p>
             <div class="line">
-              <input type="password" id="pw" placeholder="mínimo 8 caracteres" autocomplete="new-password"
+              <input type="password" id="pw" placeholder="${esc(t('host.criar.senha_ph', { n: 5 }))}" autocomplete="new-password"
                      style="flex:1;min-width:240px;padding:12px 14px;border-radius:10px;border:1px solid #6b5b95;background:#241640;color:#fff;font:inherit">
-              <button class="btn primary" id="bCreate">Criar sala</button>
+              <button class="btn primary" id="bCreate">${esc(t('host.criar.botao'))}</button>
             </div>
             <p class="ask-p" style="margin-top:18px;opacity:.7">
-              A sala é apagada 24h depois da última atividade — e também se o servidor
-              hibernar ou for reiniciado, o que acontece em hospedagem gratuita.
-              Para algo que precisa durar, exporte o ranking antes de fechar.</p>
+              ${esc(t('host.criar.aviso'))}</p>
             <div class="msg" id="createMsg">${msg ? esc(msg) : ''}</div>
             <input type="file" id="newQuiz" accept=".json,application/json" hidden>
           </div>
@@ -1055,28 +1072,28 @@ function renderCreate(msg) {
   document.querySelector('#newQuiz').onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!/\.json$/i.test(file.name)) return say(`"${file.name}" não é um .json`, 'err');
+    if (!/\.json$/i.test(file.name)) return say(t('host.quiz.nao_json', { arquivo: file.name }), 'err');
     try {
       escolhido = JSON.parse(await file.text());
       document.querySelector('#fileName').textContent = file.name;
-      say(`"${file.name}" pronto — agora a senha.`, 'ok');
+      say(t('host.criar.pronto', { arquivo: file.name }), 'ok');
     } catch (err) {
       escolhido = null;
-      say('esse arquivo não é um JSON válido: ' + err.message, 'err');
+      say(t('host.quiz.json_invalido', { motivo: err.message }), 'err');
     }
   };
   document.querySelector('#bCreate').onclick = async () => {
-    if (!escolhido) return say('escolha o arquivo de perguntas primeiro', 'err');
+    if (!escolhido) return say(t('host.criar.escolha_arquivo'), 'err');
     const password = document.querySelector('#pw').value;
-    if (password.length < 8) return say('a senha precisa de pelo menos 8 caracteres', 'err');
-    say('criando…');
+    if (password.length < 5) return say(t('host.criar.senha_curta', { n: 5 }), 'err');
+    say(t('host.criar.criando'));
     const r = await fetch('/api/rooms', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ quiz: escolhido, password }),
-    }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+    }).then((x) => x.json()).catch(() => ({ ok: false, code: 'sem_conexao' }));
     if (!r.ok) {
       const detalhe = r.problems && r.problems.length ? ' — ' + r.problems.join('; ') : '';
-      return say((r.error || 'não deu') + detalhe, 'err');
+      return say(I18N.erro(r) + detalhe, 'err');
     }
     localStorage.setItem('funquiz.host.' + r.room, r.token);
     location.replace('/host?r=' + r.room);
@@ -1086,24 +1103,50 @@ function renderCreate(msg) {
 // Descobre a sala antes de qualquer coisa: com o código em mãos dá para saber
 // se já existe token guardado para ela, e um stream recusado depois disso só
 // pode ser senha — não sala inexistente.
+function renderSemSala() {
+  telaPre = renderSemSala;
+  document.body.classList.add('sem-sala');
+  setBody(`
+    <div class="lobby"><div>
+      <h1>${esc(t('host.sem_sala.titulo'))}</h1>
+      <p class="sub">${t('host.sem_sala.sub', { sala: esc(ROOM || '—') })}</p>
+    </div></div>`);
+}
+
 (async function boot() {
   if (!ROOM) return renderCreate();
   const info = await fetch('/api/room?room=' + encodeURIComponent(ROOM))
     .then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  if (!info || !info.room) {
-    document.body.classList.add('sem-sala');
-    setBody(`
-      <div class="lobby"><div>
-        <h1>Sala não encontrada</h1>
-        <p class="sub">O código <b class="mono">${esc(ROOM || '—')}</b> não existe ou a sala já foi encerrada.</p>
-      </div></div>`);
-    return;
-  }
+  if (!info || !info.room) return renderSemSala();
   ROOM = info.room;
   TOKEN = localStorage.getItem(tokenKey()) || '';
   if (!TOKEN) return renderLogin();
   connect();
 })();
+
+// Trocar de idioma redesenha na hora, sem recarregar: recarregar derrubaria o
+// stream e, no meio de uma pergunta, zeraria o relógio na tela do projetor.
+function montarSeletor() {
+  const caixa = $('#langBox');
+  caixa.innerHTML = '';
+  caixa.appendChild(I18N.seletor());
+}
+I18N.onChange(() => {
+  document.title = t('host.titulo');
+  $('#roomLabel').textContent = t('host.sala');
+  montarSeletor();
+  // conectado: redesenha pelo estado. Antes disso, repete a tela pré-sala que
+  // está no ar (criar, senha ou sala inexistente) — ali não existe estado.
+  if (S) {
+    // render() só refaz o corpo quando muda fase, pergunta ou questionário.
+    // Idioma não é nenhum dos três, então zeramos a memória para forçar.
+    prevPhase = null; prevQ = null; prevQuiz = '';
+    lastSig = '';
+    render();
+  } else if (telaPre) telaPre();
+});
+montarSeletor();
+document.title = t('host.titulo');
 
 // ------------------------------------------------------------------ controls
 // Ponto único por onde passa todo o controle da apresentação: é aqui que a sala
@@ -1122,7 +1165,7 @@ const post = async (p, b) => {
     localStorage.removeItem(tokenKey());
     TOKEN = '';
     if (es) es.close();
-    renderLogin('sua sessão expirou — digite a senha de novo');
+    renderLogin(t('host.login.expirou'));
   }
   return r;
 };
@@ -1133,13 +1176,13 @@ $('#bLobby').onclick = () => post('/api/host/lobby');
 $('#bReset').onclick = async () => {
   const off = S ? S.players.filter((p) => !p.online) : [];
   const aviso = off.length
-    ? `\n\nTambém remove ${off.length} desconectado(s): ${off.map((p) => p.name).join(', ')}`
+    ? t('host.zerar_remove', { n: off.length, nomes: off.map((p) => p.name).join(', ') })
     : '';
-  if (!confirm('Zerar a pontuação de todos?' + aviso)) return;
+  if (!confirm(t('host.zerar_confirma') + aviso)) return;
   const r = await post('/api/host/reset', { hard: false }).then((x) => x.json());
   toast(r.removed && r.removed.length
-    ? `ranking zerado · ${r.removed.length} desconectado(s) removido(s)`
-    : 'ranking zerado');
+    ? t('host.zerado_removidos', { n: r.removed.length })
+    : t('host.zerado'));
 };
 
 addEventListener('keydown', (e) => {

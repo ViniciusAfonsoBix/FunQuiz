@@ -329,7 +329,9 @@ async function multisala() {
       `${hostA.state.title}/${hostB.state.title}`);
 
     // T5 — o que não pode virar sala
-    ok('T5 · senha curta recusada', (await req(P, 'POST', '/api/rooms', { quiz: QUIZ('X', 0), password: 'curta' })).status === 400, 'aceitou');
+    // o mínimo é 5; 'abcd' tem 4
+    ok('T5 · senha curta recusada', (await req(P, 'POST', '/api/rooms', { quiz: QUIZ('X', 0), password: 'abcd' })).status === 400, 'aceitou');
+    ok('T5 · senha no mínimo exato é aceita', (await req(P, 'POST', '/api/rooms', { quiz: QUIZ('MIN', 0), password: 'abcde' })).status === 200, 'recusou 5 caracteres');
     ok('T5 · quiz vazio recusado', (await req(P, 'POST', '/api/rooms', { quiz: { questions: [] }, password: 'senha-boa-123' })).status === 400, 'aceitou');
     const gigante = { title: 'g', questions: Array.from({ length: 200 }, (_, i) => ({ id: 'q' + i, text: 't', options: ['a', 'b'], answer: 0 })) };
     ok('T5 · perguntas demais recusadas', (await req(P, 'POST', '/api/rooms', { quiz: gigante, password: 'senha-boa-123' })).status === 400, 'aceitou');
@@ -452,7 +454,46 @@ async function esperarPorta(P) {
 
 // ---------------------------------------------------------------------- runner
 
+// O servidor manda um código estável junto de cada erro e o cliente traduz por
+// ele. Se um código não tiver entrada no dicionário, o usuário cai na frase em
+// português — funciona, mas passa despercebido. Aqui isso vira falha.
+async function traducoes() {
+  const servidor = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const fonte = fs.readFileSync(path.join(ROOT, 'public', 'i18n.js'), 'utf8');
+  const DICT = eval('(' + fonte.match(/const DICT = (\{[\s\S]*?\n  \});/)[1] + ')');
+  const idiomas = Object.keys(DICT);
+
+  const base = Object.keys(DICT.pt);
+  for (const lang of idiomas) {
+    const faltam = base.filter((k) => DICT[lang][k] === undefined);
+    const sobram = Object.keys(DICT[lang]).filter((k) => DICT.pt[k] === undefined);
+    ok(`dicionário ${lang} tem as mesmas chaves do pt`, !faltam.length && !sobram.length,
+      `faltam: ${faltam.join(', ') || '-'} | sobram: ${sobram.join(', ') || '-'}`);
+  }
+
+  const codigos = [...new Set([...servidor.matchAll(/code: '([a-z_]+)'/g)].map((m) => m[1]))];
+  ok('o servidor emite códigos de erro', codigos.length > 20, `só ${codigos.length}`);
+  for (const lang of idiomas) {
+    const semTraducao = codigos.filter((c) => DICT[lang]['err.' + c] === undefined);
+    ok(`todo código de erro tem tradução em ${lang}`, !semTraducao.length, `sem tradução: ${semTraducao.join(', ')}`);
+  }
+
+  // placeholders precisam bater: {n} que existe em pt e some em es vira buraco
+  for (const chave of base) {
+    const esperados = (DICT.pt[chave].match(/\{(\w+)\}/g) || []).sort().join(',');
+    for (const lang of idiomas) {
+      if (lang === 'pt' || DICT[lang][chave] === undefined) continue; // ausência já foi reportada acima
+      const tem = (DICT[lang][chave].match(/\{(\w+)\}/g) || []).sort().join(',');
+      if (tem !== esperados) {
+        ok(`placeholders de ${chave} batem em ${lang}`, false, `pt=[${esperados}] ${lang}=[${tem}]`);
+      }
+    }
+  }
+  ok('placeholders consistentes nos três idiomas', true, '');
+}
+
 const SUITES = [
+  ['traduções · dicionário e códigos', traducoes],
   ['regressão · o fluxo de sempre', regressao],
   ['roteamento · código da sala', roteamento],
   ['autenticação · senha do apresentador', autenticacao],

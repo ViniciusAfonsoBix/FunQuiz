@@ -42,6 +42,29 @@ completo de uma sala, o roteamento por código, a autenticação, o isolamento
 entre duas salas simultâneas, os tetos e a persistência. Sem framework e sem
 dependências, como o resto do projeto.
 
+## Idiomas
+
+A interface fala **português, inglês e espanhol**. Na primeira visita o idioma
+sai do navegador (`navigator.languages`, comparando só a base: `pt-BR` e `pt-PT`
+caem em `pt`); sem correspondência, fica o português. O seletor no canto troca na
+hora, sem recarregar — recarregar derrubaria o stream e, no meio de uma pergunta,
+custaria a resposta do participante ou o relógio no projetor. A escolha fica em
+`localStorage` e vale por dispositivo: o apresentador pode estar em português com
+a plateia em espanhol.
+
+**O conteúdo do quiz não é traduzido** — enunciados, alternativas e justificativas
+saem do JSON de quem monta a sala e aparecem como foram escritos.
+
+Tudo vive em `public/i18n.js`: um dicionário por idioma e as funções `t()` e
+`erro()`. As mensagens de erro do servidor viajam com um **código estável**
+(`{ ok: false, error: 'senha incorreta', code: 'senha_incorreta' }`) e o cliente
+traduz pelo código, caindo na frase em português se algum código escapar.
+`npm test` falha se um código ficar sem tradução, se as três tabelas divergirem
+em chaves, ou se um `{placeholder}` sumir numa das traduções.
+
+Para acrescentar um idioma: uma tabela nova em `DICT` e o código em
+`SUPORTADOS`, no topo do arquivo.
+
 ## Controles do apresentador
 
 | tecla | ação |
@@ -100,6 +123,7 @@ senha escolhida por quem cria.
   sala, o caminho é criar outra.
 - **A sala é apagada 24 h depois da última atividade** — qualquer interação
   reinicia o relógio, então uma apresentação em curso não morre no meio.
+- A senha precisa de **pelo menos 5 caracteres** (`MIN_PASSWORD` em `server.js`).
 
 Tetos, porque criar sala é anônimo: 20 salas no servidor, 2 por IP, uma criação
 por IP por minuto, 100 perguntas por quiz, 100 participantes por sala, 512 KB de

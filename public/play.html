@@ -102,7 +102,18 @@
   }
   .lrow.mine { border-color: var(--a); background: rgba(232, 56, 91, 0.2); }
 
-  .ft { flex: 0 0 auto; text-align: center; font-size: 12px; color: var(--ink-faint); letter-spacing: 0.08em; }
+  .ft {
+    flex: 0 0 auto; font-size: 12px; color: var(--ink-faint); letter-spacing: 0.08em;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+  }
+  /* o seletor fica discreto no rodapé: quem precisa dele procura, e quem não
+     precisa não tem um controle competindo com as alternativas na tela */
+  select.lang {
+    background: transparent; color: var(--ink-faint); border: 1px solid var(--panel-line);
+    border-radius: 999px; padding: 3px 8px; font: inherit; font-size: 12px;
+    letter-spacing: 0.04em; cursor: pointer;
+  }
+  select.lang option { background: #241640; color: #fff; }
   .offline {
     position: fixed; top: 0; left: 0; right: 0; z-index: 40; text-align: center;
     background: var(--bad); padding: 6px; font-weight: 700; font-size: 13px;
@@ -129,11 +140,13 @@
     <span class="sc"><b class="mono" id="meScore">0</b><span id="meRank">—</span></span>
   </div>
   <div class="pane" id="pane"></div>
-  <div class="ft" id="ft"></div>
+  <div class="ft"><span id="ft"></span><span id="langBox"></span></div>
 </div>
 <div class="confetti" id="confetti"></div>
 
+<script src="/i18n.js"></script>
 <script>
+const t = (k, v) => I18N.t(k, v);
 const $ = (s) => document.querySelector(s);
 const pane = $('#pane');
 
@@ -198,37 +211,39 @@ function view() {
     $('#meDot').style.setProperty('--dot', S.me.color);
     $('#meName').textContent = S.me.name;
     $('#meScore').textContent = S.me.score;
-    $('#meRank').textContent = S.me.rank ? `#${S.me.rank} de ${S.me.of}` : 'sem pontos';
+    $('#meRank').textContent = S.me.rank ? t('play.posicao', { pos: S.me.rank, total: S.me.of }) : t('play.sem_pontos');
   }
-  $('#ft').textContent = S.joined ? `sala ${S.room} · ${S.playerCount} na sala` : '';
+  $('#ft').textContent = S.joined ? t('play.rodape', { sala: S.room, n: S.playerCount }) : '';
 
   if (!S.joined) return renderJoin();
   if (S.phase === 'lobby')
-    return renderWait('Você entrou! 🎉', S.total
-      ? 'Olhe para a tela grande — o apresentador começa em instantes.'
-      : 'O apresentador ainda está carregando as perguntas. Fique por aqui.');
+    return renderWait(t('play.entrou.titulo'), t(S.total ? 'play.entrou.sub' : 'play.entrou.sem_quiz'));
   if (S.phase === 'blockintro')
     return renderWait(
-      S.block && S.block.title ? S.block.title : 'Novo bloco',
-      `Começando ${S.block && S.block.total > 1 ? `o bloco ${S.block.index + 1} de ${S.block.total}` : 'o bloco'} · ${S.block ? S.block.size : 0} pergunta(s). Olhe a tela grande.`);
+      S.block && S.block.title ? S.block.title : t('play.bloco.titulo'),
+      t('play.bloco.sub', {
+        qual: S.block && S.block.total > 1
+          ? t('play.bloco.qual_n', { i: S.block.index + 1, total: S.block.total })
+          : t('play.bloco.qual'),
+        n: S.block ? S.block.size : 0,
+      }));
   if (S.phase === 'prompt')
-    return renderWait('Olhe a tela grande 👀', S.question && S.question.untimed
-      ? 'O apresentador está lendo a pergunta. As alternativas liberam já — sem pressa, essa não tem tempo limite.'
-      : 'O apresentador está lendo a pergunta. As alternativas liberam já — o tempo só começa aí.');
+    return renderWait(t('play.leitura.titulo'),
+      t(S.question && S.question.untimed ? 'play.leitura.sem_tempo' : 'play.leitura.com_tempo'));
   if (S.phase === 'question') return S.myAnswer ? renderLocked() : renderAnswer();
   if (S.phase === 'reveal') return renderReveal();
   if (S.phase === 'scores' || S.phase === 'end') return renderRank();
-  renderWait('Aguarde…', '');
+  renderWait(t('play.aguarde'), '');
 }
 
 function renderJoin(err) {
   setPane(`
     <div class="mid">
       <div class="form">
-        <div class="look">entrar na sala</div>
-        <h2 style="margin-bottom:18px">${esc(S ? S.title : 'Live Poll')}</h2>
-        <input id="nm" placeholder="seu nome" maxlength="18" autocomplete="off" autocapitalize="words" enterkeyhint="go">
-        <button class="go" id="join">Entrar</button>
+        <div class="look">${esc(t('play.entrar.rotulo'))}</div>
+        <h2 style="margin-bottom:18px">${esc(S ? S.title : t('play.titulo'))}</h2>
+        <input id="nm" placeholder="${esc(t('play.entrar.nome'))}" maxlength="18" autocomplete="off" autocapitalize="words" enterkeyhint="go">
+        <button class="go" id="join">${esc(t('play.entrar.botao'))}</button>
         <div class="err" id="err">${err ? esc(err) : ''}</div>
       </div>
     </div>`);
@@ -241,16 +256,16 @@ function renderJoin(err) {
     const r = await fetch('/api/join', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, room: ROOM }),
-    }).then((x) => x.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+    }).then((x) => x.json()).catch(() => ({ ok: false, code: 'sem_conexao' }));
     if (r.ok) {
       pid = r.id;
       localStorage.setItem(pidKey(), pid);
       sig = '';
-      if (r.reclaimed) notice(`bem-vindo de volta, ${r.name} — ${r.score} pontos recuperados`);
+      if (r.reclaimed) notice(t('play.voltou', { nome: r.name, pontos: r.score }));
       reconnect();
     } else {
       sig = 'x';
-      renderJoin(r.error);
+      renderJoin(I18N.erro(r));
     }
   };
   $('#join').onclick = submit;
@@ -260,7 +275,7 @@ function renderJoin(err) {
 function renderWait(title, sub) {
   gridOnScreen = false; // saiu da pergunta: a próxima grade entra animada
   setPane(`<div class="mid"><div>
-    <div class="look">${S.index >= 0 ? `pergunta ${S.index + 1} de ${S.total}` : 'lobby'}</div>
+    <div class="look">${S.index >= 0 ? esc(t('play.pergunta', { i: S.index + 1, total: S.total })) : esc(t('play.lobby'))}</div>
     <h2>${esc(title)}</h2><p>${esc(sub)}</p></div></div>`);
 }
 
@@ -270,8 +285,8 @@ function renderAnswer() {
     setPane(`
       <div class="openbox">
         <div class="look" style="text-align:center">${esc(q.placeholder)}</div>
-        <textarea id="ta" maxlength="200" placeholder="digite aqui…"></textarea>
-        <button class="go" id="send">Enviar</button>
+        <textarea id="ta" maxlength="200" placeholder="${esc(t('play.digite_aqui'))}"></textarea>
+        <button class="go" id="send">${esc(t('play.enviar'))}</button>
         <div class="err" id="err"></div>
       </div>`);
     $('#ta').focus();
@@ -280,15 +295,15 @@ function renderAnswer() {
       if (!text) return;
       $('#send').disabled = true;
       const r = await send({ text });
-      if (!r.ok) { $('#err').textContent = r.error; notice(r.error, true); $('#send').disabled = false; }
+      if (!r.ok) { const m = I18N.erro(r); $('#err').textContent = m; notice(m, true); $('#send').disabled = false; }
     };
     return;
   }
   const n = q.optionCount || 4;
   setPane(`
     <div class="look" style="text-align:center;margin-bottom:6px">
-      ${q.prediction ? 'aposte antes da demo · ' : ''}pergunta ${S.index + 1} de ${S.total} ·
-      ${q.untimed ? 'sem tempo limite · ' : ''}toque na sua resposta
+      ${q.prediction ? esc(t('play.aposte')) : ''}${esc(t('play.pergunta', { i: S.index + 1, total: S.total }))} ·
+      ${q.untimed ? esc(t('play.sem_tempo')) : ''}${esc(t('play.toque'))}
     </div>
     <div class="grid" id="grid">
       ${Array.from({ length: n }, (_, i) => `
@@ -310,7 +325,7 @@ function renderAnswer() {
     if (!r.ok) {
       pending = null;
       sig = '';
-      notice(r.error || 'não deu para registrar — tente de novo', true);
+      notice(r.code || r.error ? I18N.erro(r) : t('play.envio_falhou'), true);
       view(); // solta a grade para uma nova tentativa
     }
   };
@@ -321,14 +336,14 @@ function renderLocked() {
   const q = S.question;
   if (q.type === 'open') {
     setPane(`<div class="mid"><div>
-      <div class="look">enviado</div><h2>Resposta registrada ✍️</h2>
+      <div class="look">${esc(t('play.enviado'))}</div><h2>${esc(t('play.registrada'))}</h2>
       <p>“${esc(mine.text)}”</p></div></div>`);
     return;
   }
   const n = q.optionCount || 4;
   // se a grade acabou de sair da tela (você tocou agora), ela não reanima a entrada
   setPane(`
-    <div class="look" style="text-align:center;margin-bottom:6px">respondido — aguardando os outros</div>
+    <div class="look" style="text-align:center;margin-bottom:6px">${esc(t('play.respondido'))}</div>
     <div class="grid locked${gridOnScreen ? ' settled' : ''}">
       ${Array.from({ length: n }, (_, i) => `
         <div class="ans opt-${i} ${i === mine.choice ? 'mine' : ''}">
@@ -342,25 +357,25 @@ function renderReveal() {
   gridOnScreen = false;
   const r = S.reveal;
   if (r.open) {
-    setPane(`<div class="mid"><div><div class="look">discussão aberta</div>
-      <h2>Sem resposta certa 💬</h2><p>Olhe a tela grande — as respostas da sala estão lá.</p></div></div>`);
+    setPane(`<div class="mid"><div><div class="look">${esc(t('play.discussao'))}</div>
+      <h2>${esc(t('play.sem_certa'))}</h2><p>${esc(t('play.olhe_tela'))}</p></div></div>`);
     return;
   }
   if (!S.myAnswer) {
     setPane(`<div class="verdict bad"><div>
       <div class="ico">${r.untimed ? '🤷' : '⏱️'}</div>
-      <div class="big">${r.untimed ? 'Sem resposta' : 'Passou o tempo'}</div>
-      <div class="sub2">Era a alternativa <b>${LETTERS[r.answer]}</b>. Na próxima!</div></div></div>`);
+      <div class="big">${esc(t(r.untimed ? 'play.sem_resposta' : 'play.passou_tempo'))}</div>
+      <div class="sub2">${t('play.era_a', { letra: LETTERS[r.answer] })}</div></div></div>`);
     return;
   }
   const good = r.correct;
   setPane(`
     <div class="verdict ${good ? 'good' : 'bad'}"><div>
       <div class="ico">${good ? '🎯' : '❌'}</div>
-      <div class="big">${good ? 'Acertou!' : 'Não foi essa'}</div>
-      ${good ? `<div class="pts">+${r.gained}</div>` : `<div class="sub2">A certa era <b>${LETTERS[r.answer]}</b></div>`}
-      ${good && S.me.streak > 1 ? `<div class="sub2">🔥 ${S.me.streak} seguidas</div>` : ''}
-      <div class="sub2">${S.me.rank ? `você está em #${S.me.rank} de ${S.me.of}` : ''}</div>
+      <div class="big">${esc(t(good ? 'play.acertou' : 'play.errou'))}</div>
+      ${good ? `<div class="pts">+${r.gained}</div>` : `<div class="sub2">${t('play.certa_era', { letra: LETTERS[r.answer] })}</div>`}
+      ${good && S.me.streak > 1 ? `<div class="sub2">${esc(t('play.seguidas', { n: S.me.streak }))}</div>` : ''}
+      <div class="sub2">${S.me.rank ? esc(t('play.voce_esta', { pos: S.me.rank, total: S.me.of })) : ''}</div>
     </div></div>`);
   if (good) burst(60);
   navigator.vibrate?.(good ? [30, 40, 30] : 140);
@@ -372,13 +387,13 @@ function renderRank() {
   const end = S.phase === 'end';
   setPane(`
     <div class="mid" style="align-items:start;padding-top:6px"><div style="width:100%;max-width:420px">
-      <div class="look">${end ? 'resultado final' : S.block && S.block.title ? 'fim de ' + esc(S.block.title) : 'ranking'}</div>
-      <h2 style="font-size:26px;margin-bottom:14px">${end ? 'Acabou! 🎉' : `Você: #${S.me.rank || '—'} · ${S.me.score} pts`}</h2>
+      <div class="look">${end ? esc(t('play.resultado_final')) : S.block && S.block.title ? esc(t('play.fim_de', { bloco: S.block.title })) : esc(t('play.ranking'))}</div>
+      <h2 style="font-size:26px;margin-bottom:14px">${end ? esc(t('play.acabou')) : esc(t('play.voce', { pos: S.me.rank || '—', pontos: S.me.score }))}</h2>
       <div class="rank">
         ${rows.map((r, i) => `
           <div class="lrow ${S.me && r.id === S.me.id ? 'mine' : ''}" style="animation-delay:${i * 80}ms">
             <span class="mono">#${r.rank}</span><span>${esc(r.name)}</span><span class="mono">${r.score}</span>
-          </div>`).join('') || '<p>ninguém pontuou ainda</p>'}
+          </div>`).join('') || `<p>${esc(t('play.ninguem'))}</p>`}
       </div>
     </div></div>`);
   if (end && S.me && S.me.rank <= 3) burst(120);
@@ -411,7 +426,7 @@ const send = (b) =>
   fetch('/api/answer', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(Object.assign({ id: pid, room: ROOM }, b)),
-  }).then((r) => r.json()).catch(() => ({ ok: false, error: 'sem conexão' }));
+  }).then((r) => r.json()).catch(() => ({ ok: false, code: 'sem_conexao' }));
 
 let es = null, banner = null;
 function reconnect() {
@@ -431,12 +446,12 @@ function reconnect() {
     if (es.readyState === EventSource.CLOSED) {
       es.close();
       if (banner) { banner.remove(); banner = null; }
-      return renderCode('essa sala foi encerrada');
+      return renderCode(t('play.sala_encerrada'));
     }
     if (!banner) {
       banner = document.createElement('div');
       banner.className = 'offline';
-      banner.textContent = 'reconectando…';
+      banner.textContent = t('play.reconectando');
       document.body.appendChild(banner);
     }
   };
@@ -450,12 +465,12 @@ function renderCode(err) {
   setPane(`
     <div class="mid">
       <div class="form">
-        <div class="look">entrar na sala</div>
-        <h2 style="margin-bottom:18px">Digite o código</h2>
-        <input id="rm" placeholder="ex.: K7P2Q" maxlength="8" autocomplete="off"
+        <div class="look">${esc(t('play.entrar.rotulo'))}</div>
+        <h2 style="margin-bottom:18px">${esc(t('play.codigo.titulo'))}</h2>
+        <input id="rm" placeholder="${esc(t('play.codigo.exemplo'))}" maxlength="8" autocomplete="off"
                autocapitalize="characters" spellcheck="false" enterkeyhint="go"
                style="text-transform:uppercase;letter-spacing:.18em;text-align:center">
-        <button class="go" id="enter">Continuar</button>
+        <button class="go" id="enter">${esc(t('play.codigo.botao'))}</button>
         <div class="err" id="err">${err ? esc(err) : ''}</div>
       </div>
     </div>`);
@@ -463,13 +478,29 @@ function renderCode(err) {
   input.focus();
   const submit = () => {
     const code = input.value.trim().toUpperCase();
-    if (!/^[A-Z2-9]{5,8}$/.test(code)) { $('#err').textContent = 'código inválido'; return; }
+    if (!/^[A-Z2-9]{5,8}$/.test(code)) { $('#err').textContent = t('play.codigo.invalido'); return; }
     // recarrega com ?r= para que atualizar a página continue funcionando
     location.search = '?r=' + code;
   };
   $('#enter').onclick = submit;
   input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
 }
+
+// Trocar de idioma redesenha a tela na hora, sem recarregar: recarregar
+// derrubaria o stream e, no meio de uma pergunta, custaria a resposta.
+function montarSeletor() {
+  const caixa = $('#langBox');
+  caixa.innerHTML = '';
+  caixa.appendChild(I18N.seletor());
+}
+I18N.onChange(() => {
+  document.title = t('play.titulo');
+  montarSeletor();
+  sig = '';            // força o redesenho: a assinatura não sabe de idioma
+  if (S) view(); else if (!ROOM) renderCode();
+});
+montarSeletor();
+document.title = t('play.titulo');
 
 reconnect();
 </script>

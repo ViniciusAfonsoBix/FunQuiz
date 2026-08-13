@@ -26,7 +26,7 @@ const MAX_QUIZ_BYTES = 512e3;   // ~1000 perguntas de texto realista
 const MAX_QUESTIONS = 100;
 const MAX_SSE_TOTAL = 400;      // o gargalo é CPU no push, não memória
 const ROOM_CREATE_MS = Number(process.env.ROOM_CREATE_MS || 60e3); // uma sala por IP por minuto
-const MIN_PASSWORD = 8;
+const MIN_PASSWORD = 5;
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -313,16 +313,16 @@ function codigoLivre() {
 
 async function createRoom(raw, password, ip) {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD)
-    return { status: 400, body: { ok: false, error: `a senha precisa de pelo menos ${MIN_PASSWORD} caracteres` } };
+    return { status: 400, body: { ok: false, error: `a senha precisa de pelo menos ${MIN_PASSWORD} caracteres`, code: 'senha_curta', n: MIN_PASSWORD } };
 
   if (Array.isArray(raw && raw.questions) && raw.questions.length > MAX_QUESTIONS)
-    return { status: 400, body: { ok: false, error: `no máximo ${MAX_QUESTIONS} perguntas por sala` } };
+    return { status: 400, body: { ok: false, error: `no máximo ${MAX_QUESTIONS} perguntas por sala`, code: 'muitas_perguntas', n: MAX_QUESTIONS } };
 
   let prepared;
   try {
     prepared = prepareQuiz(raw);
   } catch (e) {
-    if (e instanceof QuizError) return { status: 400, body: { ok: false, error: 'JSON inválido', problems: e.problems } };
+    if (e instanceof QuizError) return { status: 400, body: { ok: false, error: 'JSON inválido', code: 'json_invalido', problems: e.problems } };
     return { status: 400, body: { ok: false, error: String(e.message || e) } };
   }
 
@@ -330,18 +330,18 @@ async function createRoom(raw, password, ip) {
   const ultima = ultimaCriacao.get(ip) || 0;
   if (agora - ultima < ROOM_CREATE_MS) {
     const faltam = Math.ceil((ROOM_CREATE_MS - (agora - ultima)) / 1000);
-    return { status: 429, body: { ok: false, error: `espere ${faltam}s para criar outra sala` } };
+    return { status: 429, body: { ok: false, error: `espere ${faltam}s para criar outra sala`, code: 'espere', n: faltam } };
   }
   if (contaSalasDoIp(ip) >= MAX_ROOMS_PER_IP)
-    return { status: 429, body: { ok: false, error: `você já tem ${MAX_ROOMS_PER_IP} salas abertas` } };
+    return { status: 429, body: { ok: false, error: `você já tem ${MAX_ROOMS_PER_IP} salas abertas`, code: 'limite_por_ip', n: MAX_ROOMS_PER_IP } };
 
   // varre as expiradas antes de dizer não — pode haver vaga livre
   sweepRooms();
   if (rooms.size >= MAX_ROOMS)
-    return { status: 503, body: { ok: false, error: 'limite de salas atingido, tente em alguns minutos' } };
+    return { status: 503, body: { ok: false, error: 'limite de salas atingido, tente em alguns minutos', code: 'limite_salas' } };
 
   const code = codigoLivre();
-  if (!code) return { status: 503, body: { ok: false, error: 'não consegui gerar um código livre' } };
+  if (!code) return { status: 503, body: { ok: false, error: 'não consegui gerar um código livre', code: 'sem_codigo' } };
 
   const room = makeRoom(prepared, code);
   room.quiz.source = 'upload';
@@ -854,14 +854,14 @@ function resetGame(room, hard) {
 // global de upload voltaria a ser o ponto onde duas salas se atropelam.
 function installQuiz(room, raw) {
   if (process.env.QUESTIONS)
-    return { ok: false, error: 'o servidor foi iniciado com QUESTIONS=… — troque pelo arquivo ou reinicie sem a variável' };
+    return { ok: false, error: 'o servidor foi iniciado com QUESTIONS=… — troque pelo arquivo ou reinicie sem a variável', code: 'travado_por_env' };
   if (Array.isArray(raw && raw.questions) && raw.questions.length > MAX_QUESTIONS)
-    return { ok: false, error: `no máximo ${MAX_QUESTIONS} perguntas por sala` };
+    return { ok: false, error: `no máximo ${MAX_QUESTIONS} perguntas por sala`, code: 'muitas_perguntas', n: MAX_QUESTIONS };
   let prepared;
   try {
     prepared = prepareQuiz(raw);
   } catch (e) {
-    if (e instanceof QuizError) return { ok: false, error: 'JSON inválido', problems: e.problems };
+    if (e instanceof QuizError) return { ok: false, error: 'JSON inválido', code: 'json_invalido', problems: e.problems };
     return { ok: false, error: String(e.message || e) };
   }
   room.quiz = prepared;
@@ -881,27 +881,27 @@ const MIN_ANSWER_MS = 300; // nenhum humano toca antes disso; script toca em 5ms
 function submitAnswer(room, playerId, body, ip) {
   const p = room.players.get(playerId);
   const q = currentQuestion(room);
-  if (!p || !q) return { ok: false, error: 'sem pergunta ativa' };
-  if (room.phase !== PHASE.QUESTION) return { ok: false, error: 'respostas fechadas' };
-  if (p.answers.has(q.id)) return { ok: false, error: 'você já respondeu' };
+  if (!p || !q) return { ok: false, error: 'sem pergunta ativa', code: 'sem_pergunta' };
+  if (room.phase !== PHASE.QUESTION) return { ok: false, error: 'respostas fechadas', code: 'respostas_fechadas' };
+  if (p.answers.has(q.id)) return { ok: false, error: 'você já respondeu', code: 'ja_respondeu' };
   // a resposta tem de vir do aparelho que entrou com esse nome
   const ipHash = hashIp(room, ip);
   if (ipHash && p.ipHash && ipHash !== p.ipHash)
-    return { ok: false, error: 'entre de novo neste aparelho para responder' };
+    return { ok: false, error: 'entre de novo neste aparelho para responder', code: 'outro_aparelho' };
 
   const elapsed = Date.now() - room.questionStartedAt;
   if (!q.untimed && elapsed > q.seconds * 1000 + 1500)
-    return { ok: false, error: 'tempo esgotado' };
-  if (elapsed < MIN_ANSWER_MS) return { ok: false, error: 'calma — leia as alternativas primeiro' };
+    return { ok: false, error: 'tempo esgotado', code: 'tempo_esgotado' };
+  if (elapsed < MIN_ANSWER_MS) return { ok: false, error: 'calma — leia as alternativas primeiro', code: 'muito_rapido' };
 
   if (q.type === 'open') {
     const text = String(body.text || '').trim().slice(0, 200);
-    if (!text) return { ok: false, error: 'resposta vazia' };
+    if (!text) return { ok: false, error: 'resposta vazia', code: 'resposta_vazia' };
     p.answers.set(q.id, { text, at: elapsed });
   } else {
     const choice = Number(body.choice);
     if (!Number.isInteger(choice) || choice < 0 || choice >= q.options.length)
-      return { ok: false, error: 'opção inválida' };
+      return { ok: false, error: 'opção inválida', code: 'opcao_invalida' };
     const correct = choice === q.answer;
     let gained = 0;
     if (correct) {
@@ -926,20 +926,20 @@ function submitAnswer(room, playerId, body, ip) {
 function join(room, name, ip) {
   // corpo hostil não pode virar exceção: {"name":{"toString":1}} quebrava o String()
   name = (typeof name === 'string' ? name : '').trim().replace(/\s+/g, ' ').slice(0, 18);
-  if (!name) return { ok: false, error: 'digite um nome' };
+  if (!name) return { ok: false, error: 'digite um nome', code: 'nome_vazio' };
 
   // nome repetido só passa se vier do mesmo IP que o criou — aí é a mesma pessoa
   // voltando (trocou de aba, limpou o navegador, caiu a rede) e recupera a pontuação
   const ipHash = hashIp(room, ip);
   const taken = [...room.players.values()].find((p) => p.name.toLowerCase() === name.toLowerCase());
   if (!taken && room.players.size >= MAX_PLAYERS_PER_ROOM)
-    return { ok: false, error: 'a sala está lotada' };
+    return { ok: false, error: 'a sala está lotada', code: 'sala_lotada' };
   if (taken) {
-    if (taken.ipHash !== ipHash) return { ok: false, error: 'esse nome já está na sala' };
+    if (taken.ipHash !== ipHash) return { ok: false, error: 'esse nome já está na sala', code: 'nome_tomado' };
     // mesmo IP não basta: se aquele jogador está conectado agora, ninguém assume
     // o lugar dele (numa rede com NAT o IP não identifica a pessoa)
     if (taken.online)
-      return { ok: false, error: 'esse nome está conectado agora — se for você, feche a outra aba' };
+      return { ok: false, error: 'esse nome está conectado agora — se for você, feche a outra aba', code: 'nome_online' };
     // não marca online aqui: quem afirma presença é o stream SSE que vem a seguir
     pushState(room);
     return {
@@ -1016,7 +1016,7 @@ const server = http.createServer((req, res) => {
     const alvo = String(req.url || '').split('?')[0];
     console.log(`  !! erro em ${req.method} ${alvo}: ${e && e.stack ? e.stack : e}`);
     try {
-      if (!res.headersSent) sendJson(res, 500, { ok: false, error: 'erro interno' });
+      if (!res.headersSent) sendJson(res, 500, { ok: false, error: 'erro interno', code: 'interno' });
       else res.end();
     } catch { /* conexão já foi */ }
   });
@@ -1063,16 +1063,16 @@ async function handle(req, res) {
     const room = resolveRoom(req, url, null);
     // 404 antes dos headers de event-stream: assim o cliente distingue "sala
     // encerrada" de "rede caiu" e para de reconectar a cada 1,5 s
-    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou' });
+    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou', code: 'sala_inexistente' });
     // o stream do apresentador entrega o enunciado e as alternativas, que o
     // produto esconde de proposito do celular do participante — proteger só os
     // POSTs deixaria a porta da frente aberta
     if (role === 'host' && !isHost(room, hostToken(req, url)))
-      return sendJson(res, 401, { ok: false, error: 'senha necessária' });
+      return sendJson(res, 401, { ok: false, error: 'senha necessária', code: 'senha_necessaria' });
     // acima deste teto a degradação seria silenciosa e todo mundo travaria
     // junto; melhor recusar a conexão nova e manter as antigas fluindo
     if (totalSse() >= MAX_SSE_TOTAL)
-      return sendJson(res, 503, { ok: false, error: 'servidor cheio, tente em instantes' });
+      return sendJson(res, 503, { ok: false, error: 'servidor cheio, tente em instantes', code: 'servidor_cheio' });
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -1109,14 +1109,14 @@ async function handle(req, res) {
 
   if (p === '/api/room') {
     const room = resolveRoom(req, url, null);
-    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou' });
+    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou', code: 'sala_inexistente' });
     return sendJson(res, 200, { ok: true, room: room.code, title: room.quiz.title, phase: room.phase });
   }
 
   // modelo de questionário para baixar e editar
   if (p === '/api/template') {
     return fs.readFile(path.join(ROOT, 'template.json'), (err, buf) => {
-      if (err) return sendJson(res, 500, { ok: false, error: 'template.json não encontrado' });
+      if (err) return sendJson(res, 500, { ok: false, error: 'template.json não encontrado', code: 'template_ausente' });
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Disposition': 'attachment; filename="modelo-perguntas.json"',
@@ -1130,8 +1130,8 @@ async function handle(req, res) {
     // o upload do questionário é o único corpo grande que aceitamos
     const grande = p === '/api/host/quiz' || p === '/api/rooms';
     const body = await readBody(req, grande ? MAX_QUIZ_BYTES : 1e5);
-    if (body.__tooBig) return sendJson(res, 413, { ok: false, error: `arquivo grande demais (máx ${Math.round(MAX_QUIZ_BYTES / 1000)} KB)` });
-    if (body.__badJson) return sendJson(res, 400, { ok: false, error: 'não consegui ler o JSON — confira vírgulas e chaves' });
+    if (body.__tooBig) return sendJson(res, 413, { ok: false, error: `arquivo grande demais (máx ${Math.round(MAX_QUIZ_BYTES / 1000)} KB)`, code: 'arquivo_grande', n: Math.round(MAX_QUIZ_BYTES / 1000) });
+    if (body.__badJson) return sendJson(res, 400, { ok: false, error: 'não consegui ler o JSON — confira vírgulas e chaves', code: 'json_ilegivel' });
 
     // criar sala é a única rota que não pertence a nenhuma sala ainda
     if (p === '/api/rooms') {
@@ -1141,19 +1141,19 @@ async function handle(req, res) {
     // a sala é resolvida DEPOIS do await: entre ler o corpo e despachar, ela
     // pode ter sido derrubada pela expiração
     const room = resolveRoom(req, url, body);
-    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou' });
+    if (!room) return sendJson(res, 404, { ok: false, error: 'sala não existe ou expirou', code: 'sala_inexistente' });
 
     // trocar a senha por um token é a única rota /api/host/* que dispensa token
     if (p === '/api/host/login') {
       const ok = await checkPassword(room, body.password);
-      if (!ok) return sendJson(res, 401, { ok: false, error: 'senha incorreta' });
+      if (!ok) return sendJson(res, 401, { ok: false, error: 'senha incorreta', code: 'senha_incorreta' });
       return sendJson(res, 200, { ok: true, room: room.code, token: issueToken(room) });
     }
 
     // todo o controle da apresentação exige token — inclusive kick e reset,
     // que são destrutivos e hoje não pediam nada
     if (p.startsWith('/api/host/') && !isHost(room, hostToken(req, url)))
-      return sendJson(res, 401, { ok: false, error: 'senha necessária' });
+      return sendJson(res, 401, { ok: false, error: 'senha necessária', code: 'senha_necessaria' });
 
     switch (p) {
       case '/api/host/logout':
@@ -1184,7 +1184,7 @@ async function handle(req, res) {
         room.players.delete(body.playerId);
         pushState(room);
         return sendJson(res, 200, { ok: true });
-      default: return sendJson(res, 404, { ok: false, error: 'not found' });
+      default: return sendJson(res, 404, { ok: false, error: 'not found', code: 'nao_encontrado' });
     }
   }
 
@@ -1194,7 +1194,7 @@ async function handle(req, res) {
     const join = room && joinUrlFor(room);
     // sem endereço público não existe QR honesto: melhor um erro do que um
     // código que leva a lugar nenhum — ou, pior, ao servidor de outra pessoa
-    if (!join) return sendJson(res, 404, { ok: false, error: 'sem sala ou sem PUBLIC_URL para gerar o QR' });
+    if (!join) return sendJson(res, 404, { ok: false, error: 'sem sala ou sem PUBLIC_URL para gerar o QR', code: 'sem_qr' });
     try {
       const QR = require(path.join(ROOT, 'public', 'qr.js'));
       const svg = QR.svg(join, { dark: '#14082b', light: '#ffffff', quiet: 4 });
